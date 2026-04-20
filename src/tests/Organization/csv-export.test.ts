@@ -31,7 +31,7 @@ async function triggerExport(pageAdmin: Page, home: Home): Promise<string> {
   return readFileSync(filePath!, 'utf-8').replace(/^\uFEFF/, '');
 }
 
-test.describe('CSV Export: toolbar button', () => {
+test.describe('CSV Export: toolbar button @org', () => {
   test('should be visible on the candidate list page', async ({ pageAdmin }) => {
     const home = new Home(pageAdmin);
     await home.goto();
@@ -46,7 +46,7 @@ test.describe('CSV Export: toolbar button', () => {
   });
 });
 
-test.describe('CSV Export: confirmation dialog', () => {
+test.describe('CSV Export: confirmation dialog @org', () => {
   test('should show OK and Cancel buttons after clicking エクスポート', async ({ pageAdmin }) => {
     const home = new Home(pageAdmin);
     await home.goto();
@@ -68,7 +68,7 @@ test.describe('CSV Export: confirmation dialog', () => {
 // All download tests use a 90 s timeout: the server generates the CSV on demand
 // and a full export (all records, no filter) can take longer than the default 30 s,
 // especially under concurrent test load.
-test.describe('CSV Export: downloaded file', () => {
+test.describe('CSV Export: downloaded file @org', () => {
   test('should trigger a download with a .csv filename when OK is clicked', { timeout: 90_000 }, async ({ pageAdmin }) => {
     const home = new Home(pageAdmin);
     await home.goto();

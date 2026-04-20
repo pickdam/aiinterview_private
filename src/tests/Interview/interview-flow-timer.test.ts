@@ -168,10 +168,10 @@ const expectInterviewToFinish = async (page: Page): Promise<void> => {
   });
 };
 
-test.describe("Interview Flow - Timer related cases", () => {
+test.describe("Interview Flow - Timer related cases @interview", () => {
   let interviewUrl: string;
 
-  test.beforeEach(async ({ apiAdmin }) => {
+  test.beforeEach(async ({ freshApiAdmin: apiAdmin }) => {
     const timestamp = Date.now();
     const seededEmail = `product-dev_qa+ai+timer+${timestamp}@givery.co.jp`;
 

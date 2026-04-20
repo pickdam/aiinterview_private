@@ -1,7 +1,7 @@
 import { expect, test } from "@src/fixtures/fixtures";
 import { Home } from "@src/pages/home.page";
 
-test.describe('Organization filtering tests', () => {
+test.describe('Organization filtering tests @org', () => {
   test('should filter candidates by not-started status', async ({ pageAdmin }) => {
     const home = new Home(pageAdmin);
     await home.goto();

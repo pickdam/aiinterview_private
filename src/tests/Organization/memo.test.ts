@@ -3,7 +3,7 @@ import { Home } from "@src/pages/home.page";
 
 test.describe.configure({ mode: 'serial' });
 
-test.describe('Memo: creating and updating candidate memos', () => {
+test.describe('Memo: creating and updating candidate memos @org', () => {
   const FIRST_MEMO   = 'E2Eテスト用のメモ（初回作成）';
   const UPDATED_MEMO = 'E2Eテスト用のメモ（更新後）';
 

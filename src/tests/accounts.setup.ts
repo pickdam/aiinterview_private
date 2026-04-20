@@ -6,6 +6,7 @@ import process from "process";
 import { getAccounts } from "@src/utils/accounts";
 import { AuthPage } from "@src/pages/auth.page";
 import { Home } from "@src/pages/home.page";
+import { loginToReportingApi } from "@src/utils/api-auth";
 
 // TODO dynamically only log into accounts that are required for the set of test cases being run.
 getAccounts().forEach((user) => {
@@ -31,21 +32,12 @@ getAccounts().forEach((user) => {
     const apiCtx = await playwright.request.newContext({
       baseURL: process.env.REPORTING_API_BASE_URL,
     });
-    const loginResp = await apiCtx.post("reporting/login", {
-      data: { username: user.email, password: user.password },
-    });
-    const loginData = await loginResp.json();
+    const authToken = await loginToReportingApi(apiCtx, user);
     await apiCtx.dispose();
-
-    if (!loginData.id_token) {
-      throw new Error(
-        `id_token not found in reporting API login response for role: ${user.role}`
-      );
-    }
 
     // Augment the auth file with id_token
     const authData = JSON.parse(readFileSync(authFile, "utf-8"));
-    authData.id_token = loginData.id_token;
+    authData.id_token = authToken;
     writeFileSync(authFile, JSON.stringify(authData, null, 2));
   });
 });

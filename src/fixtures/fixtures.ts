@@ -3,9 +3,10 @@ import { UserRoles } from "@src/enums/user-roles";
 import { ReportingApi } from "@src/api/reporting-api";
 import { readFileSync } from "node:fs";
 import process from "process";
+import { loginToReportingApiAsRole } from "@src/utils/api-auth";
 
 const test = base.extend<
-  { pageUser: Page; pageAdmin: Page },
+  { freshApiAdmin: ReportingApi; pageUser: Page; pageAdmin: Page },
   { apiAdmin: ReportingApi }
 >({
   ...Object.fromEntries(
@@ -39,6 +40,19 @@ const test = base.extend<
     await use(new ReportingApi(apiCtx, authToken));
     await apiCtx.dispose();
   }, { scope: "worker" }],
+
+  // Test-scoped: logs in through the Reporting API for every test that needs
+  // fresh data seeding credentials. Use this for long-running interview specs
+  // where a worker-scoped token can expire before all scenarios finish.
+  freshApiAdmin: async ({ playwright }, use) => {
+    const apiCtx = await playwright.request.newContext({
+      baseURL: process.env.REPORTING_API_BASE_URL,
+    });
+    const authToken = await loginToReportingApiAsRole(apiCtx, UserRoles.Admin);
+
+    await use(new ReportingApi(apiCtx, authToken));
+    await apiCtx.dispose();
+  },
 });
 
 export { test, expect };

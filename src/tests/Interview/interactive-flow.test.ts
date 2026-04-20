@@ -1,27 +1,18 @@
-import type { Page } from "@playwright/test";
 import { LmStudioApi } from "@src/api/lm-studio-api";
 import type { InterviewLanguage, SttProvider } from "@src/api/types";
 import { InterviewBuilder } from "@src/builders/interview-builder";
 import { expect, test } from "@src/fixtures/fixtures";
-import { Home } from "@src/pages/home.page";
-import { InterviewQuestionPage } from "@src/pages/interview-question.page";
-import { ReportPage } from "@src/pages/report.page";
-import {
-  formatTimer,
-  InterviewFlowActions,
-  timeToSeconds,
-} from "@src/utils/interview-flow-actions";
+import { InterviewFlowActions } from "@src/utils/interview-flow-actions";
 import { withBrowserApplicantPrefix } from "@src/utils/browser-project";
 import {
-  createSpeechAudioBase64,
+  answerLeadUpQuestion,
+  handleDeepDiveLoop,
+  type InteractiveFlowQuestionRecord,
+  verifyInteractiveFlowReport,
+} from "@src/utils/interactive-flow-helpers";
+import {
   VirtualMicrophone,
 } from "@src/utils/virtual-microphone";
-import {
-  calculateTranscriptionSimilarity,
-  normalizeForTranscriptionComparison,
-  reportGenerationErrorPattern,
-  transcriptionErrorPattern,
-} from "@src/utils/transcription-comparison";
 
 // ============================================================
 // Types
@@ -43,22 +34,6 @@ type InteractiveFlowConfig = {
   questionBank: QuestionBank;
   voice: string;
   closingRemark: string;
-};
-
-type QuestionRecord = {
-  question: string;
-  answer: string | null; // null if timed out without answer
-  isDeepDive: boolean;
-};
-
-type AdvanceMethod = "submit" | "timeout";
-
-type LeadUpQuestionOptions = {
-  interviewerAudioAlreadyFinished?: boolean;
-};
-
-type AnsweredQuestionRecord = QuestionRecord & {
-  answer: string;
 };
 
 // ============================================================
@@ -150,535 +125,18 @@ const interactiveFlowScenarios: InteractiveFlowConfig[] = [
 // ============================================================
 
 const totalLeadUpQuestions = 3;
-const questionTimeoutBufferSeconds = 45;
-const timeoutToneDurationMs = 3000;
-const timeoutToneIntervalMs = 1000;
-const closingRemarkSignals = [
-  "次に進みます",
-  "We'll move to the next question.",
-];
-const languageNameByCode = {
-  en: "English",
-  ja: "Japanese",
-} satisfies Record<InterviewLanguage, string>;
-
-// ============================================================
-// Helper Functions
-// ============================================================
-
-const normalizeVisibleText = (text: string): string =>
-  text.replace(/\s+/g, " ").trim();
-
-const getQuestionText = async (
-  interviewQuestionPage: InterviewQuestionPage,
-): Promise<string> => {
-  return (await interviewQuestionPage.questionText.innerText()).trim();
-};
-
-const isInterviewCompleteVisible = async (page: Page): Promise<boolean> => {
-  return page
-    .getByText(/The interview is now complete|面接が完了しました/i)
-    .isVisible()
-    .catch(() => false);
-};
-
-const isClosingRemarkText = (
-  questionText: string,
-  scenarioClosingRemark: string,
-): boolean => {
-  const normalizedQuestionText = normalizeVisibleText(questionText);
-  const possibleClosingRemarks = [
-    scenarioClosingRemark,
-    ...closingRemarkSignals,
-  ];
-
-  return possibleClosingRemarks.some((closingRemark) =>
-    normalizedQuestionText.includes(normalizeVisibleText(closingRemark)),
-  );
-};
-
-const getLatestLeadUpAnswer = (
-  questionRecords: QuestionRecord[],
-): AnsweredQuestionRecord | undefined => {
-  return questionRecords.findLast(
-    (record): record is AnsweredQuestionRecord =>
-      !record.isDeepDive && record.answer !== null,
-  );
-};
-
-const buildDeepDiveAnswerPrompt = ({
-  interviewLanguage,
-  previousLeadUpAnswer,
-  questionText,
-}: {
-  interviewLanguage: InterviewLanguage;
-  previousLeadUpAnswer: AnsweredQuestionRecord | undefined;
-  questionText: string;
-}): string => {
-  const languageName = languageNameByCode[interviewLanguage];
-  const previousContext = previousLeadUpAnswer
-    ? [
-        `Previous lead-up question: ${previousLeadUpAnswer.question}`,
-        `Previous candidate answer: ${previousLeadUpAnswer.answer}`,
-      ].join("\n")
-    : "No previous answer context is available.";
-
-  return [
-    "You are answering an interactive job interview as the candidate.",
-    `The interview language is ${languageName}. Always answer in ${languageName}, even if the follow-up question is written in another language.`,
-    "Use the previous candidate answer as context. Do not say that you have not answered yet if the previous answer already contains the relevant information.",
-    previousContext,
-    `Current follow-up question: ${questionText}`,
-    `Answer naturally in ${languageName}. Keep the answer concise, direct, and consistent with the previous answer.`,
-  ].join("\n\n");
-};
-
-const waitForQuestionTextToChange = async (
-  interviewQuestionPage: InterviewQuestionPage,
-  previousQuestionText: string,
-): Promise<string> => {
-  const normalizedPreviousQuestionText =
-    normalizeVisibleText(previousQuestionText);
-
-  await expect
-    .poll(
-      async () =>
-        normalizeVisibleText(
-          await interviewQuestionPage.questionText.innerText(),
-        ),
-      {
-        timeout: 20000,
-      },
-    )
-    .not.toBe(normalizedPreviousQuestionText);
-
-  return getQuestionText(interviewQuestionPage);
-};
-
-const waitForCurrentQuestionTimerToExpire = async (
-  interviewQuestionPage: InterviewQuestionPage,
-  virtualMicrophone: VirtualMicrophone,
-): Promise<void> => {
-  const initialQuestionText = normalizeVisibleText(
-    await getQuestionText(interviewQuestionPage),
-  );
-  const remainingSeconds = timeToSeconds(
-    await interviewQuestionPage.remainingTime.innerText(),
-  );
-  const timeoutMs = (remainingSeconds + questionTimeoutBufferSeconds) * 1000;
-
-  await expect
-    .poll(
-      async () => {
-        await virtualMicrophone.emitTone(timeoutToneDurationMs);
-
-        if (await isInterviewCompleteVisible(interviewQuestionPage.page)) {
-          return true;
-        }
-
-        const currentQuestionText = normalizeVisibleText(
-          await getQuestionText(interviewQuestionPage).catch(() => ""),
-        );
-
-        if (
-          currentQuestionText &&
-          currentQuestionText !== initialQuestionText
-        ) {
-          return true;
-        }
-
-        const currentTimerSeconds = await interviewQuestionPage.remainingTime
-          .innerText()
-          .then(timeToSeconds)
-          .catch(() => 0);
-
-        return currentTimerSeconds <= 1;
-      },
-      {
-        intervals: [timeoutToneIntervalMs],
-        timeout: timeoutMs,
-      },
-    )
-    .toBe(true);
-};
-
-const waitForCurrentQuestionTimerToStart = async (
-  interviewQuestionPage: InterviewQuestionPage,
-  initialTimerSeconds: number,
-): Promise<void> => {
-  await expect
-    .poll(
-      async () =>
-        timeToSeconds(await interviewQuestionPage.remainingTime.innerText()),
-      {
-        intervals: [500],
-        timeout: 30000,
-      },
-    )
-    .toBeLessThan(initialTimerSeconds);
-};
-
-/**
- * Answer a lead-up question and verify all expected behavior
- * NOTE: Does NOT submit/advance - that happens in the deep dive loop after closing remarks
- */
-const answerLeadUpQuestion = async (
-  page: Page,
-  questionIndex: number,
-  questionData: { question: string; answer: string },
-  flow: InterviewFlowActions,
-  virtualMicrophone: VirtualMicrophone,
-  { interviewerAudioAlreadyFinished = false }: LeadUpQuestionOptions = {},
-): Promise<void> => {
-  await test.step(`Lead-up question ${questionIndex + 1}: Answer`, async () => {
-    const interviewQuestionPage = new InterviewQuestionPage(page);
-
-    // Verify question appears
-    await expect(interviewQuestionPage.interviewerPreview).toBeVisible();
-    await expect(interviewQuestionPage.intervieweeVideoFeedback).toBeVisible();
-    await expect
-      .poll(() => interviewQuestionPage.isIntervieweeVideoPlaying(), {
-        timeout: 10000,
-      })
-      .toBe(true);
-
-    // Verify counter shows correct lead-up question index
-    await expect(interviewQuestionPage.questionCount).toHaveText(
-      `${questionIndex}/${totalLeadUpQuestions}`,
-      { timeout: 15000 },
-    );
-
-    // Verify question text
-    await expect(interviewQuestionPage.questionText).toContainText(
-      questionData.question,
-    );
-
-    // Candidate input is accepted only after the interviewer has finished.
-    if (!interviewerAudioAlreadyFinished) {
-      await flow.waitForInterviewerAudioToFinish();
-    }
-
-    // Verify timer shows full time
-    const initialTimerText = formatTimer(60);
-    await expect(interviewQuestionPage.remainingTime).toHaveText(
-      initialTimerText,
-    );
-
-    // Generate and play answer audio
-    const answerAudioBase64 = createSpeechAudioBase64(questionData.answer, {
-      voice: virtualMicrophone["options"].voice,
-    });
-    await virtualMicrophone.playAudioBase64(answerAudioBase64);
-
-    // Verify timer started counting down
-    const initialTimerSeconds = timeToSeconds(
-      await interviewQuestionPage.remainingTime.innerText(),
-    );
-    await waitForCurrentQuestionTimerToStart(
-      interviewQuestionPage,
-      initialTimerSeconds,
-    );
-
-    // Verify submit button enabled
-    await expect(interviewQuestionPage.submitAnswerBtn).toBeEnabled({
-      timeout: 15000,
-    });
-  });
-};
-
-/**
- * Handle the deep dive loop for a lead-up question
- * Also handles advancing the lead-up question first
- */
-const handleDeepDiveLoop = async (
-  page: Page,
-  leadUpQuestionIndex: number,
-  leadUpAdvanceMethod: AdvanceMethod,
-  deepDiveAdvanceMethod: AdvanceMethod,
-  interviewLanguage: InterviewLanguage,
-  lmStudio: LmStudioApi,
-  virtualMicrophone: VirtualMicrophone,
-  flow: InterviewFlowActions,
-  closingRemark: string,
-  questionRecords: QuestionRecord[],
-): Promise<void> => {
-  await test.step(`Deep dive loop for question ${leadUpQuestionIndex + 1}`, async () => {
-    const interviewQuestionPage = new InterviewQuestionPage(page);
-    let deepDiveCount = 0;
-    let previousQuestionText = await getQuestionText(interviewQuestionPage);
-
-    // First, handle advancing the lead-up question
-    if (leadUpAdvanceMethod === "submit") {
-      await flow.submitCurrentQuestion();
-    } else {
-      // Wait for timer to expire
-      await waitForCurrentQuestionTimerToExpire(
-        interviewQuestionPage,
-        virtualMicrophone,
-      );
-    }
-
-    // Now handle deep dive questions
-    let shouldContinueDeepDiveLoop = true;
-    while (shouldContinueDeepDiveLoop) {
-      if (await isInterviewCompleteVisible(page)) {
-        shouldContinueDeepDiveLoop = false;
-        continue;
-      }
-
-      let questionText = await getQuestionText(interviewQuestionPage).catch(
-        () => "",
-      );
-
-      if (
-        normalizeVisibleText(questionText) ===
-        normalizeVisibleText(previousQuestionText)
-      ) {
-        // Reset and wait for next audio (deep dive question or closing remark)
-        await virtualMicrophone.resetObservedAudioPlayback();
-        await flow.waitForInterviewerAudioToStart();
-
-        // Read the text while the audio is still playing. The closing remark can
-        // disappear immediately after playback when the app advances.
-        questionText = await waitForQuestionTextToChange(
-          interviewQuestionPage,
-          previousQuestionText,
-        );
-      }
-
-      // Check if closing remark detected
-      if (isClosingRemarkText(questionText, closingRemark)) {
-        await flow.waitForInterviewerAudioToFinish().catch(async (error) => {
-          if (!(await isInterviewCompleteVisible(page))) {
-            throw error;
-          }
-        });
-        await test.step(`Closing remark detected: "${closingRemark}"`, async () => {
-          // Deep dives complete - closing remark shown
-          expect(deepDiveCount).toBeGreaterThanOrEqual(1);
-        });
-        shouldContinueDeepDiveLoop = false;
-        continue;
-      }
-
-      await flow.waitForInterviewerAudioToFinish().catch(async (error) => {
-        if (!(await isInterviewCompleteVisible(page))) {
-          throw error;
-        }
-      });
-      previousQuestionText = questionText;
-      deepDiveCount++;
-
-      await test.step(`Deep dive question ${deepDiveCount} for lead-up ${leadUpQuestionIndex + 1}`, async () => {
-        // Verify counter hasn't changed (still showing lead-up index)
-        await expect(interviewQuestionPage.questionCount).toHaveText(
-          `${leadUpQuestionIndex}/${totalLeadUpQuestions}`,
-        );
-
-        // Send question to LM Studio (start early, in parallel)
-        const answerPromise = lmStudio.ask(
-          buildDeepDiveAnswerPrompt({
-            interviewLanguage,
-            previousLeadUpAnswer: getLatestLeadUpAnswer(questionRecords),
-            questionText,
-          }),
-          {
-            maxTokens: 150,
-            systemPrompt:
-              "You are the interview candidate. Answer only with the candidate's spoken response.",
-          },
-        );
-
-        // Capture the timer before applicant audio. The timer starts only after
-        // candidate input is heard.
-        const initialTimerSeconds = timeToSeconds(
-          await interviewQuestionPage.remainingTime.innerText(),
-        );
-
-        // Wait for LM Studio response
-        const answer = await answerPromise;
-
-        // Record this deep dive Q&A
-        questionRecords.push({
-          question: questionText,
-          answer: answer,
-          isDeepDive: true,
-        });
-
-        // Generate audio and play
-        await virtualMicrophone.speak(answer);
-
-        // Verify the applicant audio started the timer before checking submit.
-        await waitForCurrentQuestionTimerToStart(
-          interviewQuestionPage,
-          initialTimerSeconds,
-        );
-
-        // Verify submit button enabled
-        await expect(interviewQuestionPage.submitAnswerBtn).toBeEnabled({
-          timeout: 30000,
-        });
-
-        // Advance based on method
-        if (deepDiveAdvanceMethod === "submit") {
-          await flow.submitCurrentQuestion();
-        } else {
-          // Wait for timeout
-          await waitForCurrentQuestionTimerToExpire(
-            interviewQuestionPage,
-            virtualMicrophone,
-          );
-        }
-      });
-    }
-
-    // After closing remark, wait for auto-advancement
-    await test.step(`Wait for auto-advancement after closing remark`, async () => {
-      // Wait for counter to update or interview to complete
-      const nextQuestionIndex = leadUpQuestionIndex + 1;
-      if (nextQuestionIndex < totalLeadUpQuestions) {
-        // Should advance to next lead-up question
-        await virtualMicrophone.resetObservedAudioPlayback();
-        await expect(interviewQuestionPage.questionCount).toHaveText(
-          `${nextQuestionIndex}/${totalLeadUpQuestions}`,
-          { timeout: 30000 },
-        );
-        await flow.waitForInterviewerAudioToFinish();
-      } else {
-        // Interview should be complete
-        await expect(
-          page.getByText(/The interview is now complete|面接が完了しました/i),
-        ).toBeVisible({ timeout: 30000 });
-      }
-    });
-  });
-};
-
-/**
- * Verify the report generation and transcript accuracy
- */
-const verifyReport = async (
-  pageAdmin: Page,
-  seededEmail: string,
-  questionRecords: QuestionRecord[],
-  scenario: InteractiveFlowConfig,
-): Promise<void> => {
-  await test.step(`Verify report for ${scenario.languageLabel} with ${scenario.providerLabel}`, async () => {
-    const dashboard = new Home(pageAdmin);
-
-    await dashboard.goto();
-    await dashboard.searchCandidateByEmail(seededEmail);
-    await expect(dashboard.openReportLink).toBeVisible({
-      timeout: 120000,
-    });
-
-    const [reportTab] = await Promise.all([
-      pageAdmin.waitForEvent("popup"),
-      dashboard.openReport(),
-    ]);
-    const reportPage = new ReportPage(reportTab);
-
-    await reportTab.waitForLoadState("domcontentloaded");
-    await reportTab.bringToFront();
-
-    // Wait for report generation with retries
-    await expect(async () => {
-      await reportTab.reload({ waitUntil: "domcontentloaded" });
-      await expect(
-        reportPage.page.locator("main").getByText(reportGenerationErrorPattern),
-      ).toHaveCount(0);
-      await expect(reportPage.examLogHeading).toBeVisible({
-        timeout: 10000,
-      });
-      await expect(reportPage.recordingVideo).toBeVisible();
-    }).toPass({
-      intervals: [15000, 30000, 60000],
-      timeout: 420000,
-    });
-
-    // Verify total question count (lead-up + deep dives)
-    const totalQuestions = questionRecords.length;
-    await expect(reportPage.recordingQuestionButtons).toHaveCount(
-      totalQuestions,
-    );
-
-    // Open transcript panel
-    await reportPage.openTranscript();
-    await expect(reportPage.transcriptPanel).toBeVisible();
-    await expect(
-      reportPage.examLogSection.getByText(transcriptionErrorPattern),
-    ).toHaveCount(0);
-
-    // Wait for all transcripts to be generated
-    const answeredQuestions = questionRecords.filter((q) => q.answer !== null);
-    await expect
-      .poll(
-        async () => (await reportPage.getCandidateTranscriptTexts()).length,
-        {
-          timeout: 60000,
-        },
-      )
-      .toBeGreaterThanOrEqual(answeredQuestions.length);
-
-    const transcriptTexts = await reportPage.getCandidateTranscriptTexts();
-
-    // Verify no transcription errors
-    for (const transcriptText of transcriptTexts) {
-      expect(
-        normalizeForTranscriptionComparison(transcriptText).length,
-      ).toBeGreaterThan(0);
-      expect(transcriptText).not.toMatch(transcriptionErrorPattern);
-    }
-
-    // Verify transcript accuracy for all answered questions
-    for (const { question, answer, isDeepDive } of answeredQuestions) {
-      if (answer === null) continue;
-
-      const bestTranscriptSimilarity = Math.max(
-        ...transcriptTexts.map((transcriptText) =>
-          calculateTranscriptionSimilarity(answer, transcriptText),
-        ),
-      );
-
-      const questionType = isDeepDive ? "Deep dive" : "Lead-up";
-      expect(
-        bestTranscriptSimilarity,
-        `${questionType} question "${question.substring(0, 50)}..." transcript should be at least 60% similar`,
-      ).toBeGreaterThanOrEqual(0.6);
-    }
-
-    // Verify recording video works
-    await reportPage.selectRecordingQuestion(1);
-    await expect
-      .poll(() => reportPage.isRecordingReady(), { timeout: 30000 })
-      .toBe(true);
-
-    const initialRecordingTime = await reportPage.getRecordingCurrentTime();
-
-    await reportPage.playRecording();
-    await expect
-      .poll(() => reportPage.getRecordingCurrentTime(), {
-        timeout: 15000,
-      })
-      .toBeGreaterThan(initialRecordingTime);
-    await expect
-      .poll(() => reportPage.isRecordingPlaying(), { timeout: 10000 })
-      .toBe(true);
-    await reportPage.pauseRecording();
-  });
-};
 
 // ============================================================
 // Tests
 // ============================================================
 
-test.describe("Interview Flow - Interactive with Deep Dives", () => {
+test.describe("Interview Flow - Interactive with Deep Dives @interview", () => {
   for (const scenario of interactiveFlowScenarios) {
     test.describe(`${scenario.languageLabel} - ${scenario.providerLabel}`, () => {
       let seededEmail: string;
       let interviewUrl: string;
 
-      test.beforeEach(async ({ apiAdmin }) => {
+      test.beforeEach(async ({ freshApiAdmin: apiAdmin }) => {
         const timestamp = Date.now();
         seededEmail = `product-dev_qa+ai+interactive+${scenario.language}+${scenario.sttProvider}+${timestamp}@givery.co.jp`;
 
@@ -729,7 +187,7 @@ test.describe("Interview Flow - Interactive with Deep Dives", () => {
         );
 
         const questions = Object.values(scenario.questionBank);
-        const questionRecords: QuestionRecord[] = [];
+        const questionRecords: InteractiveFlowQuestionRecord[] = [];
 
         const virtualMicrophone = new VirtualMicrophone(page, {
           speechStartDelayMs: 1500,
@@ -749,84 +207,102 @@ test.describe("Interview Flow - Interactive with Deep Dives", () => {
         });
 
         // Question 1: submit lead-up, submit deep-dive
-        await answerLeadUpQuestion(
-          page,
-          0,
-          questions[0],
-          flow,
-          virtualMicrophone,
-        );
+        await test.step("Lead-up question 1: answer", async () => {
+          await answerLeadUpQuestion({
+            flow,
+            page,
+            questionData: questions[0],
+            questionIndex: 0,
+            totalLeadUpQuestions,
+            virtualMicrophone,
+          });
+        });
         questionRecords.push({
           question: questions[0].question,
           answer: questions[0].answer,
           isDeepDive: false,
         });
-        await handleDeepDiveLoop(
-          page,
-          0,
-          "submit",
-          "submit",
-          scenario.language,
-          lmStudio,
-          virtualMicrophone,
-          flow,
-          scenario.closingRemark,
-          questionRecords,
-        );
+        await test.step("Deep dive loop for lead-up question 1", async () => {
+          await handleDeepDiveLoop({
+            closingRemark: scenario.closingRemark,
+            deepDiveAdvanceMethod: "submit",
+            flow,
+            interviewLanguage: scenario.language,
+            leadUpAdvanceMethod: "submit",
+            leadUpQuestionIndex: 0,
+            lmStudio,
+            page,
+            questionRecords,
+            totalLeadUpQuestions,
+            virtualMicrophone,
+          });
+        });
 
         // Question 2: timeout lead-up, submit deep-dive
-        await answerLeadUpQuestion(
-          page,
-          1,
-          questions[1],
-          flow,
-          virtualMicrophone,
-          { interviewerAudioAlreadyFinished: true },
-        );
+        await test.step("Lead-up question 2: answer", async () => {
+          await answerLeadUpQuestion({
+            flow,
+            interviewerAudioAlreadyFinished: true,
+            page,
+            questionData: questions[1],
+            questionIndex: 1,
+            totalLeadUpQuestions,
+            virtualMicrophone,
+          });
+        });
         questionRecords.push({
           question: questions[1].question,
           answer: questions[1].answer,
           isDeepDive: false,
         });
-        await handleDeepDiveLoop(
-          page,
-          1,
-          "timeout",
-          "submit",
-          scenario.language,
-          lmStudio,
-          virtualMicrophone,
-          flow,
-          scenario.closingRemark,
-          questionRecords,
-        );
+        await test.step("Deep dive loop for lead-up question 2", async () => {
+          await handleDeepDiveLoop({
+            closingRemark: scenario.closingRemark,
+            deepDiveAdvanceMethod: "submit",
+            flow,
+            interviewLanguage: scenario.language,
+            leadUpAdvanceMethod: "timeout",
+            leadUpQuestionIndex: 1,
+            lmStudio,
+            page,
+            questionRecords,
+            totalLeadUpQuestions,
+            virtualMicrophone,
+          });
+        });
 
         // Question 3: submit lead-up, timeout deep-dive
-        await answerLeadUpQuestion(
-          page,
-          2,
-          questions[2],
-          flow,
-          virtualMicrophone,
-          { interviewerAudioAlreadyFinished: true },
-        );
+        await test.step("Lead-up question 3: answer", async () => {
+          await answerLeadUpQuestion({
+            flow,
+            interviewerAudioAlreadyFinished: true,
+            page,
+            questionData: questions[2],
+            questionIndex: 2,
+            totalLeadUpQuestions,
+            virtualMicrophone,
+          });
+        });
         questionRecords.push({
           question: questions[2].question,
           answer: questions[2].answer,
           isDeepDive: false,
         });
-        await handleDeepDiveLoop(
-          page,
-          2,
-          "submit",
-          "timeout",
-          scenario.language,
-          lmStudio,
-          virtualMicrophone,
-          flow,
-          scenario.closingRemark,
-          questionRecords,
-        );
+        await test.step("Deep dive loop for lead-up question 3", async () => {
+          await handleDeepDiveLoop({
+            closingRemark: scenario.closingRemark,
+            deepDiveAdvanceMethod: "timeout",
+            flow,
+            interviewLanguage: scenario.language,
+            leadUpAdvanceMethod: "submit",
+            leadUpQuestionIndex: 2,
+            lmStudio,
+            page,
+            questionRecords,
+            totalLeadUpQuestions,
+            virtualMicrophone,
+          });
+        });
 
         // Verify interview complete
         await test.step("Verify interview completed", async () => {
@@ -836,7 +312,14 @@ test.describe("Interview Flow - Interactive with Deep Dives", () => {
         });
 
         // Verify report and transcripts
-        await verifyReport(pageAdmin, seededEmail, questionRecords, scenario);
+        await test.step("Verify report and transcripts", async () => {
+          await verifyInteractiveFlowReport({
+            pageAdmin,
+            questionRecords,
+            scenarioLabel: `${scenario.languageLabel} with ${scenario.providerLabel}`,
+            seededEmail,
+          });
+        });
       });
     });
   }

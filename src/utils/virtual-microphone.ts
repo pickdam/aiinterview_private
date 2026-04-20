@@ -1,16 +1,19 @@
 /* eslint-disable no-undef */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Page } from "@playwright/test";
 
 export type TextAudioInput = string | Iterable<string> | AsyncIterable<string>;
+export type NativeTextToSpeechProvider = "auto" | "macos" | "windows";
 
 export interface TextToSpeechOptions {
   sampleRateHz?: number;
+  ttsProvider?: NativeTextToSpeechProvider;
   voice?: string;
+  windowsVoice?: string;
 }
 
 export interface VirtualMicrophonePlaybackOptions {
@@ -22,6 +25,11 @@ export interface VirtualMicrophoneOptions extends TextToSpeechOptions {
   speechGain?: number;
   toneGain?: number;
 }
+
+type ResolvedVirtualMicrophoneOptions = Required<
+  Omit<VirtualMicrophoneOptions, "windowsVoice">
+> &
+  Pick<VirtualMicrophoneOptions, "windowsVoice">;
 
 type VirtualMicrophoneWindow = Window & {
   __activeAudioPlayCount?: number;
@@ -55,38 +63,185 @@ const textInputToString = async (input: TextAudioInput): Promise<string> => {
   return chunks.join("");
 };
 
+const getNonEmptyEnv = (name: string): string | undefined => {
+  const value = process.env[name]?.trim();
+
+  return value ? value : undefined;
+};
+
+const resolveNativeTextToSpeechProvider = (
+  provider: NativeTextToSpeechProvider | undefined,
+): Exclude<NativeTextToSpeechProvider, "auto"> => {
+  const requestedProvider =
+    provider ??
+    (getNonEmptyEnv("APPLICANT_ANSWER_TTS_PROVIDER") as
+      | NativeTextToSpeechProvider
+      | undefined) ??
+    "auto";
+
+  if (!["auto", "macos", "windows"].includes(requestedProvider)) {
+    throw new Error(
+      `Unsupported applicant TTS provider "${requestedProvider}". ` +
+        'Use "auto", "macos", or "windows".',
+    );
+  }
+
+  if (requestedProvider === "auto") {
+    if (process.platform === "darwin") {
+      return "macos";
+    }
+
+    if (process.platform === "win32") {
+      return "windows";
+    }
+
+    throw new Error(
+      `No native applicant TTS provider is configured for ${process.platform}. ` +
+        'Set APPLICANT_ANSWER_TTS_PROVIDER to "macos" or "windows" on a supported OS.',
+    );
+  }
+
+  return requestedProvider;
+};
+
+const getTextToSpeechVoice = (options: TextToSpeechOptions): string =>
+  options.voice ?? getNonEmptyEnv("APPLICANT_ANSWER_TTS_VOICE") ?? "Kyoko";
+
+const toVoiceEnvSuffix = (voice: string): string =>
+  voice
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+
+const getMappedWindowsVoice = (
+  voice: string | undefined,
+): string | undefined => {
+  if (!voice) {
+    return undefined;
+  }
+
+  return getNonEmptyEnv(
+    `APPLICANT_ANSWER_TTS_WINDOWS_VOICE_${toVoiceEnvSuffix(voice)}`,
+  );
+};
+
+const createMacOsSpeechWav = ({
+  aiffPath,
+  options,
+  text,
+  wavPath,
+}: {
+  aiffPath: string;
+  options: TextToSpeechOptions;
+  text: string;
+  wavPath: string;
+}): void => {
+  execFileSync(
+    "say",
+    ["-v", getTextToSpeechVoice(options), "-o", aiffPath, text],
+    { stdio: "ignore" },
+  );
+  execFileSync(
+    "afconvert",
+    [
+      "-f",
+      "WAVE",
+      "-d",
+      `LEI16@${options.sampleRateHz ?? 16000}`,
+      aiffPath,
+      wavPath,
+    ],
+    { stdio: "ignore" },
+  );
+};
+
+const createWindowsSpeechWav = ({
+  options,
+  textPath,
+  wavPath,
+}: {
+  options: TextToSpeechOptions;
+  textPath: string;
+  wavPath: string;
+}): void => {
+  const script = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Speech
+$synthesizer = New-Object System.Speech.Synthesis.SpeechSynthesizer
+try {
+    $voiceName = $env:VIRTUAL_MICROPHONE_TTS_VOICE
+    if (-not [string]::IsNullOrWhiteSpace($voiceName)) {
+        $installedVoiceNames = $synthesizer.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name }
+        if ($installedVoiceNames -contains $voiceName) {
+            $synthesizer.SelectVoice($voiceName)
+        }
+    }
+
+    $sampleRate = [int]$env:VIRTUAL_MICROPHONE_TTS_SAMPLE_RATE
+    $format = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo -ArgumentList @(
+        $sampleRate,
+        [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen,
+        [System.Speech.AudioFormat.AudioChannel]::Mono
+    )
+    $synthesizer.SetOutputToWaveFile($env:VIRTUAL_MICROPHONE_TTS_OUTPUT_PATH, $format)
+    $text = Get-Content -LiteralPath $env:VIRTUAL_MICROPHONE_TTS_TEXT_PATH -Raw
+    $synthesizer.Speak($text) | Out-Null
+} finally {
+    $synthesizer.Dispose()
+}
+`;
+  const powerShellExecutable =
+    getNonEmptyEnv("APPLICANT_ANSWER_TTS_POWERSHELL_PATH") ?? "powershell.exe";
+
+  execFileSync(
+    powerShellExecutable,
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      script,
+    ],
+    {
+      env: {
+        ...process.env,
+        VIRTUAL_MICROPHONE_TTS_OUTPUT_PATH: wavPath,
+        VIRTUAL_MICROPHONE_TTS_SAMPLE_RATE: String(
+          options.sampleRateHz ?? 16000,
+        ),
+        VIRTUAL_MICROPHONE_TTS_TEXT_PATH: textPath,
+        VIRTUAL_MICROPHONE_TTS_VOICE:
+          options.windowsVoice ??
+          getMappedWindowsVoice(options.voice) ??
+          getNonEmptyEnv("APPLICANT_ANSWER_TTS_WINDOWS_VOICE") ??
+          getTextToSpeechVoice(options),
+      },
+      stdio: "ignore",
+    },
+  );
+};
+
 export const createSpeechAudioBase64 = (
   text: string,
   options: TextToSpeechOptions = {},
 ): string => {
   const tempDir = mkdtempSync(join(tmpdir(), "virtual-microphone-audio-"));
   const aiffPath = join(tempDir, "speech.aiff");
+  const textPath = join(tempDir, "speech.txt");
   const wavPath = join(tempDir, "speech.wav");
 
   try {
-    execFileSync(
-      "say",
-      [
-        "-v",
-        options.voice ?? process.env.APPLICANT_ANSWER_TTS_VOICE ?? "Kyoko",
-        "-o",
-        aiffPath,
-        text,
-      ],
-      { stdio: "ignore" },
-    );
-    execFileSync(
-      "afconvert",
-      [
-        "-f",
-        "WAVE",
-        "-d",
-        `LEI16@${options.sampleRateHz ?? 16000}`,
-        aiffPath,
-        wavPath,
-      ],
-      { stdio: "ignore" },
-    );
+    const provider = resolveNativeTextToSpeechProvider(options.ttsProvider);
+
+    if (provider === "macos") {
+      createMacOsSpeechWav({ aiffPath, options, text, wavPath });
+    } else {
+      writeFileSync(textPath, text, "utf8");
+      createWindowsSpeechWav({ options, textPath, wavPath });
+    }
 
     return readFileSync(wavPath).toString("base64");
   } finally {
@@ -103,7 +258,7 @@ export const createSpeechAudioBase64FromTextInput = async (
 
 export class VirtualMicrophone {
   private readonly page: Page;
-  private readonly options: Required<VirtualMicrophoneOptions>;
+  private readonly options: ResolvedVirtualMicrophoneOptions;
 
   constructor(page: Page, options: VirtualMicrophoneOptions = {}) {
     this.page = page;
@@ -112,7 +267,17 @@ export class VirtualMicrophone {
       speechStartDelayMs: options.speechStartDelayMs ?? 750,
       speechGain: options.speechGain ?? 4,
       toneGain: options.toneGain ?? 0.9,
-      voice: options.voice ?? process.env.APPLICANT_ANSWER_TTS_VOICE ?? "Kyoko",
+      ttsProvider:
+        options.ttsProvider ??
+        (getNonEmptyEnv("APPLICANT_ANSWER_TTS_PROVIDER") as
+          | NativeTextToSpeechProvider
+          | undefined) ??
+        "auto",
+      voice:
+        options.voice ?? getNonEmptyEnv("APPLICANT_ANSWER_TTS_VOICE") ?? "Kyoko",
+      windowsVoice:
+        options.windowsVoice ??
+        getNonEmptyEnv("APPLICANT_ANSWER_TTS_WINDOWS_VOICE"),
     };
   }
 

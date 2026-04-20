@@ -1,6 +1,7 @@
 import type { InterviewLanguage, SttProvider } from "@src/api/types";
 import { InterviewBuilder } from "@src/builders/interview-builder";
 import { expect, test } from "@src/fixtures/fixtures";
+import { refreshAdminBrowserAuth } from "@src/utils/api-auth";
 import { Home } from "@src/pages/home.page";
 import { InterviewQuestionPage } from "@src/pages/interview-question.page";
 import { ReportPage } from "@src/pages/report.page";
@@ -103,13 +104,13 @@ const interviewFlowScenarios = languageScenarios.flatMap((languageScenario) =>
   })),
 );
 
-test.describe("Interview Flow - Non-interactive", () => {
+test.describe("Interview Flow - Non-interactive @interview", () => {
   for (const scenario of interviewFlowScenarios) {
     test.describe(`${scenario.languageLabel} - ${scenario.providerLabel}`, () => {
       let seededEmail: string;
       let interviewUrl: string;
 
-      test.beforeEach(async ({ apiAdmin }) => {
+      test.beforeEach(async ({ freshApiAdmin: apiAdmin }) => {
         seededEmail = `product-dev_qa+ai+nonint+${scenario.language}+${scenario.sttProvider}+${Date.now()}@givery.co.jp`;
 
         const companyResp = await apiAdmin.createCompany({
@@ -276,6 +277,7 @@ test.describe("Interview Flow - Non-interactive", () => {
         await test.step(`The Admin should be able to verify the transcription for the flow in ${scenario.languageLabel} with ${scenario.providerLabel}`, async () => {
           const dashboard = new Home(pageAdmin);
 
+          await refreshAdminBrowserAuth(pageAdmin);
           await dashboard.goto();
           await dashboard.searchCandidateByEmail(seededEmail);
           await expect(dashboard.openReportLink).toBeVisible({

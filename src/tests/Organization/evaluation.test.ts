@@ -3,7 +3,7 @@ import { Home } from "@src/pages/home.page";
 
 test.describe.configure({ mode: 'serial' });
 
-test.describe('Evaluation: setting result on a candidate row', () => {
+test.describe('Evaluation: setting result on a candidate row @org', () => {
   // Each test reads live counter/row values at startup so accumulated state from prior
   // tests does not affect individual assertions. There are no revert steps: the application
   // does not reliably support backward evaluation transitions (e.g. 選考通過 → 評価待ち)

@@ -203,9 +203,9 @@ const expectInterviewToFinish = async (page: Page): Promise<void> => {
   });
 };
 
-test.describe("Interview Flow - Refresh related cases", () => {
+test.describe("Interview Flow - Refresh related cases @interview", () => {
   test("Refreshing after the first question timer starts should restart from the first question", async ({
-    apiAdmin,
+    freshApiAdmin: apiAdmin,
     page,
   }, testInfo) => {
     test.setTimeout(refreshTestTimeoutMs);
@@ -248,7 +248,7 @@ test.describe("Interview Flow - Refresh related cases", () => {
   });
 
   test("Refreshing after the first question is submitted should restart from the last question", async ({
-    apiAdmin,
+    freshApiAdmin: apiAdmin,
     page,
   }, testInfo) => {
     test.setTimeout(refreshTestTimeoutMs);

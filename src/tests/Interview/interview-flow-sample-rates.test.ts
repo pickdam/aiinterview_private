@@ -254,10 +254,10 @@ const expectInterviewToFinish = async (page: Page): Promise<void> => {
   await expectNoVisibleInterviewErrors(page);
 };
 
-test.describe("Interview Flow - Applicant audio sample rates", () => {
+test.describe("Interview Flow - Applicant audio sample rates @interview", () => {
   for (const sampleRateHz of sampleRatesHz) {
     test(`The non-interactive flow should finish with ${sampleRateHz} Hz applicant audio`, async ({
-      apiAdmin,
+      freshApiAdmin: apiAdmin,
       page,
     }, testInfo) => {
       test.setTimeout(sampleRateTestTimeoutMs);

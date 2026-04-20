@@ -1,7 +1,7 @@
 import { expect, test } from "@src/fixtures/fixtures";
 import { Home } from "@src/pages/home.page";
 
-test.describe('Toolbar: interview flow filter', () => {
+test.describe('Toolbar: interview flow filter @org', () => {
   test('should display "すべての面接" as the default selected value', async ({ pageAdmin }) => {
     const home = new Home(pageAdmin);
     await home.goto();
@@ -56,7 +56,7 @@ test.describe('Toolbar: interview flow filter', () => {
   });
 });
 
-test.describe('Toolbar: candidate search', () => {
+test.describe('Toolbar: candidate search @org', () => {
   test('should display an empty search input by default', async ({ pageAdmin }) => {
     const home = new Home(pageAdmin);
     await home.goto();
@@ -70,7 +70,7 @@ test.describe('Toolbar: candidate search', () => {
 
     await expect(home.resultCountHeader).toBeVisible();
 
-    const headerBefore = (await home.resultCountHeader.textContent()) ?? '';
+    const headerBefore = await home.resultCountHeader.innerText();
 
     await home.candidateSearchInput.fill('e2e');
 

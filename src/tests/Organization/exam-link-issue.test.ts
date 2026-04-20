@@ -1,8 +1,7 @@
 import { expect, test } from '@src/fixtures/fixtures';
 import { ExamIssueLink } from '@src/pages/exam-issue-link.page';
-import process from "process";
 
-test.describe('Exam Link issue - self delivery', () => {
+test.describe('Exam Link issue - self delivery @org', () => {
 
     let commonLink: string;
 

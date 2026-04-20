@@ -5,6 +5,7 @@ import type { ReportingApi } from "@src/api/reporting-api";
 import type { InterviewLanguage, SttProvider } from "@src/api/types";
 import { InterviewBuilder } from "@src/builders/interview-builder";
 import { expect, test } from "@src/fixtures/fixtures";
+import { refreshAdminBrowserAuth } from "@src/utils/api-auth";
 import { Home } from "@src/pages/home.page";
 import { InterviewQuestionPage } from "@src/pages/interview-question.page";
 import { ReportPage } from "@src/pages/report.page";
@@ -310,6 +311,7 @@ const openGeneratedReport = async (
 ): Promise<ReportPage> => {
   const dashboard = new Home(pageAdmin);
 
+  await refreshAdminBrowserAuth(pageAdmin);
   await dashboard.goto();
   await dashboard.searchCandidateByEmail(seededEmail);
   await expect(dashboard.openReportLink).toBeVisible({
@@ -381,9 +383,9 @@ const expectReportTranscriptions = async (
   }
 };
 
-test.describe("Interview Flow - Non-interactive many questions", () => {
+test.describe("Interview Flow - Non-interactive many questions @interview", () => {
   test("A Japanese non-interactive flow should handle ten answered questions with one timeout", async ({
-    apiAdmin,
+    freshApiAdmin: apiAdmin,
     page,
     pageAdmin,
   }, testInfo) => {
