@@ -1,0 +1,291 @@
+version: 2.1
+
+orbs:
+  node: circleci/node@7.2.1
+
+# Define executors that can be reused across jobs
+executors:
+  playwright-executor:
+    docker:
+      - image: mcr.microsoft.com/playwright:v1.53.1
+  trcli-executor:
+    docker:
+      - image: python:3.11-slim-buster
+    environment:
+      # Username and password are stored securely in CircleCI environment variables
+      TESTRAIL_HOST: ""
+      TESTRAIL_PROJECT: ""
+
+# Pipeline parameters for configuring the run options in the CircleCI UI
+# These parameters are used when triggering jobs manually via the UI
+parameters:
+  test-environment:
+    type: enum
+    default: "dev"
+    enum: ["dev", "stage"]
+  test-filter:
+    type: string
+    default: "tests/"
+  testrail-run-id:
+    type: integer
+    default: 0
+    description: "Push results to an existing TestRail Run ID (skipped if 0)"
+  trigger:
+    type: enum
+    default: "manual"
+    enum: ["manual", "frontend"]
+    description: "Manual when triggering via CirclCI UI. Otherwise used to disguish automated API trigger source."
+
+jobs:
+  lint-check:
+    executor:
+      name: node/default
+    steps:
+      - checkout
+      - node/install-packages
+      - run:
+          name: Run lint check
+          command: npx eslint .
+  type-check:
+    executor:
+      name: node/default
+    steps:
+      - checkout
+      - node/install-packages
+      - run:
+          name: Run type check
+          command: npx tsc -p tsconfig.json --noEmit
+
+  run-tests:
+    parameters:
+      # Parameters for the run-tests job itself. Named the same as the pipeline parameters
+      # but are available only in the run-tests job scope
+      test-environment:
+        type: string
+      test-filter:
+        type: string
+        default: "tests/"
+    executor: playwright-executor
+    resource_class: medium
+    steps:
+      - checkout
+      - node/install:
+          node-version: "22"
+      - run:
+          name: Install dependencies
+          command: |
+            npm install
+      - run:
+          name: Create .env file
+          command: |
+            case "<< parameters.test-environment >>" in
+              dev)
+                echo BASE_URL='' > .env
+                echo HEADLESS=true >> .env
+                echo ACCOUNTS_JSON=".accounts.dev.json" >> .env
+                ;;
+              stage)
+                echo BASE_URL='' > .env
+                echo HEADLESS=true >> .env
+                echo ACCOUNTS_JSON=".accounts.stage.json" >> .env
+                ;;
+              # Add more environments as needed
+              *)
+                echo "Unknown environment: << parameters.test-environment >>"
+                exit 1
+                ;;
+            esac
+            cat .env
+      - run:
+          # Copy the account credentials from the CircleCI Environment Variable
+          # into a json file that the test suite can read
+          name: Create .accounts.json file
+          command: |
+            case "<< parameters.test-environment >>" in
+              dev)
+                echo "${ACCOUNTS_DEV_JSON}" > .accounts.dev.json
+                ;;
+              stage)
+                echo "${ACCOUNTS_STAGE_JSON}" > .accounts.stage.json
+                ;;
+              # Add more environments as needed
+              *)
+                echo "Unknown environment: << parameters.test-environment >>"
+                exit 1
+                ;;
+            esac
+      - run:
+          name: Run Tests
+          when: always
+          command: |
+            xvfb-run npx playwright test << parameters.test-filter >>
+      - persist_to_workspace:
+          #   when: always
+          root: .
+          paths:
+            - test-reports/junit
+      - store_artifacts:
+          path: ./test-reports
+          destination: test-reports
+      - store_test_results:
+          # This reference to the junit reports is used by CircleCI to collate its Test Insights
+          path: ./test-reports/junit
+
+  trcli-create-test-run:
+    parameters:
+      testrail-run-title:
+        type: string
+        description: "Prefix - will be appended with datetime"
+    executor: trcli-executor
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Install trcli
+          command: |
+            pip install trcli
+      - run:
+          name: Create a Test Run to upload results
+          # Create a new test run and store the outputted id to run_id.yaml for later use
+          command: |
+            CURRENT_DATETIME=$(date '+%Y-%m-%d %H:%M')
+            trcli -h $TESTRAIL_HOST --project "$TESTRAIL_PROJECT" -u $TESTRAIL_USERNAME -p $TESTRAIL_PASSWORD add_run --title "<< parameters.testrail-run-title >> ${CURRENT_DATETIME}" --run-include-all -f run_id.yaml
+      - persist_to_workspace:
+          root: .
+          paths:
+            - run_id.yaml
+
+  trcli-push-test-results:
+    # Calls TRCLI on all junit .XML files found in the output dir, and uploads
+    # the test results to the specified TestRail run id.
+    # (Requires setup-trcli to have been run before in the workflow)
+    parameters:
+      testrail-run-id:
+        type: integer
+        description: "The id of the TestRail test run"
+    executor: trcli-executor
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Install trcli
+          command: |
+            pip install trcli
+      - run:
+          name: Execute TRCLI for all JUnit Output XML files
+          command: |
+
+            if [ << parameters.testrail-run-id >> -gt 0 ]; then
+                RUN_ID="<< parameters.testrail-run-id >>"
+                echo "Using parameter testrail-run-id: $RUN_ID"
+            else
+                echo "Parameter testrail-run-id is 0, reading from YAML file"
+                RUN_ID=$(sed -n 's/^run_id: *//p' run_id.yaml)
+                echo "Using YAML run_id: $RUN_ID"
+            fi
+
+            trcli -n -h $TESTRAIL_HOST --project "$TESTRAIL_PROJECT" -u $TESTRAIL_USERNAME -p $TESTRAIL_PASSWORD parse_junit --case-matcher "property" --run-id $RUN_ID -f test-reports/junit/junit.xml
+          when: always
+
+workflows:
+  dev_default_workflow:
+    # Default workflow is run upon PRs, merges, manual triggers, etc
+    # Does not upload to TestRail
+    when:
+      and:
+        - equal: ["dev", << pipeline.parameters.test-environment >>]
+        - equal: ["manual", << pipeline.parameters.trigger >>]
+        - not: << pipeline.parameters.testrail-run-id >>
+    jobs:
+      - lint-check
+      - type-check
+      - run-tests:
+          requires:
+            - lint-check
+            - type-check
+          # You may have an error on the next line if you have VSCode CircleCI plugin installed. It can be ignored.
+          # Context: https://discuss.circleci.com/t/false-parameter-must-be-a-string-error-when-passing-an-enum/48390/5
+          test-environment: << pipeline.parameters.test-environment >>
+          test-filter: << pipeline.parameters.test-filter >>
+
+  stage_default_workflow:
+    # Default workflow is run upon PRs, merges, manual triggers, etc
+    # Does not upload to TestRail
+    when:
+      and:
+        - equal: ["stage", << pipeline.parameters.test-environment >>]
+        - equal: ["manual", << pipeline.parameters.trigger >>]
+        - not: << pipeline.parameters.testrail-run-id >>
+    jobs:
+      - lint-check
+      - type-check
+      - run-tests:
+          requires:
+            - lint-check
+            - type-check
+          # You may have an error on the next line if you have VSCode CircleCI plugin installed. It can be ignored.
+          # Context: https://discuss.circleci.com/t/false-parameter-must-be-a-string-error-when-passing-an-enum/48390/5
+          test-environment: << pipeline.parameters.test-environment >>
+          test-filter: << pipeline.parameters.test-filter >>
+
+  dev_frontend_release:
+    # When frontend project completes a release to dev and triggers a test run with the `frontend` trigger variable
+    when:
+      and:
+        - equal: ["dev", << pipeline.parameters.test-environment >>]
+        - equal: ["frontend", << pipeline.parameters.trigger >>]
+    jobs:
+      - run-tests:
+          # You may have an error on the next line if you have VSCode CircleCI plugin installed. It can be ignored.
+          # Context: https://discuss.circleci.com/t/false-parameter-must-be-a-string-error-when-passing-an-enum/48390/5
+          test-environment: << pipeline.parameters.test-environment >>
+          test-filter: << pipeline.parameters.test-filter >>
+
+  stage_frontend_release:
+    # When frontend project completes a release to staging and triggers a test run with the `frontend` trigger variable
+    # Also create a TestRail run called 'Staging Regression' and upload test results to it.
+    when:
+      and:
+        - equal: ["stage", << pipeline.parameters.test-environment >>]
+        - equal: ["frontend", << pipeline.parameters.trigger >>]
+    jobs:
+      - trcli-create-test-run:
+          testrail-run-title: "Staging Regression"
+      - run-tests:
+          # You may have an error on the next line if you have VSCode CircleCI plugin installed. It can be ignored.
+          # Context: https://discuss.circleci.com/t/false-parameter-must-be-a-string-error-when-passing-an-enum/48390/5
+          test-environment: << pipeline.parameters.test-environment >>
+          test-filter: << pipeline.parameters.test-filter >>
+      - trcli-push-test-results:
+          testrail-run-id: 0
+          requires:
+            - trcli-create-test-run
+            - run-tests:
+                - success
+                - failed
+
+  testrail_workflow:
+    # For manually triggering a run with its results to be uploaded to a specified TestRail Run ID
+    # For example on one-off limited runs, second pass test runs on existing suites etc
+    when:
+      and:
+        - equal: ["manual", << pipeline.parameters.trigger >>]
+        - not:
+            equal: [0, << pipeline.parameters.testrail-run-id >>]
+    jobs:
+      - lint-check
+      - type-check
+      - run-tests:
+          requires:
+            - lint-check
+            - type-check
+          # You may have an error on the next line if you have VSCode CircleCI plugin installed. It can be ignored.
+          # Context: https://discuss.circleci.com/t/false-parameter-must-be-a-string-error-when-passing-an-enum/48390/5
+          test-environment: << pipeline.parameters.test-environment >>
+          test-filter: << pipeline.parameters.test-filter >>
+      - trcli-push-test-results:
+          testrail-run-id: << pipeline.parameters.testrail-run-id >>
+          requires:
+            - run-tests: # trcli-push-test-results can run even if run-tests has succeeded or failed
+                - success
+                - failed
