@@ -70,6 +70,11 @@ type VerifyReportOptions = {
     seededEmail: string
 }
 
+export type DeepDiveLoopResult = {
+    deepDiveCount: number
+    sawClosingRemark: boolean
+}
+
 type AnswerDeepDiveQuestionOptions = {
     deepDiveAdvanceMethod: InteractiveFlowAdvanceMethod
     flow: InterviewFlowActions
@@ -262,6 +267,12 @@ const answerDeepDiveQuestion = async ({
     await expect(interviewQuestionPage.questionCount).toHaveText(
         `${leadUpQuestionIndex}/${totalLeadUpQuestions}`,
     )
+    await expect(interviewQuestionPage.intervieweeVideoFeedback).toBeVisible()
+    await expect
+        .poll(() => interviewQuestionPage.isIntervieweeVideoPlaying(), {
+            timeout: 10000,
+        })
+        .toBe(true)
 
     const answerPromise = lmStudio.ask(
         buildDeepDiveAnswerPrompt({
@@ -435,9 +446,10 @@ export const handleDeepDiveLoop = async ({
     totalLeadUpQuestions,
     virtualMicrophone,
     ...deepDiveOptions
-}: HandleDeepDiveLoopOptions): Promise<void> => {
+}: HandleDeepDiveLoopOptions): Promise<DeepDiveLoopResult> => {
     const interviewQuestionPage = new InterviewQuestionPage(page)
     let deepDiveCount = 0
+    let sawClosingRemark = false
     let previousQuestionText = await getQuestionText(interviewQuestionPage)
 
     await advanceCurrentQuestion({
@@ -471,6 +483,7 @@ export const handleDeepDiveLoop = async ({
         }
 
         if (isClosingRemarkText(questionText, closingRemark)) {
+            sawClosingRemark = true
             await waitForInterviewerAudioToFinishOrCompletion(flow, page)
             expect(deepDiveCount).toBeGreaterThanOrEqual(1)
             shouldContinueDeepDiveLoop = false
@@ -500,6 +513,8 @@ export const handleDeepDiveLoop = async ({
         totalLeadUpQuestions,
         virtualMicrophone,
     })
+
+    return { deepDiveCount, sawClosingRemark }
 }
 
 export const verifyInteractiveFlowReport = async ({
