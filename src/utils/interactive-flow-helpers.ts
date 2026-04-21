@@ -51,7 +51,9 @@ type AnswerLeadUpQuestionOptions = {
 
 type HandleDeepDiveLoopOptions = {
     closingRemark: string
-    deepDiveAdvanceMethod: InteractiveFlowAdvanceMethod
+    deepDiveAdvanceMethod:
+        | InteractiveFlowAdvanceMethod
+        | InteractiveFlowAdvanceMethod[]
     flow: InterviewFlowActions
     interviewLanguage: InterviewLanguage
     leadUpAdvanceMethod: InteractiveFlowAdvanceMethod
@@ -250,6 +252,19 @@ const waitForCurrentQuestionTimerToStart = async (
             },
         )
         .toBeLessThan(initialTimerSeconds)
+}
+
+const resolveDeepDiveAdvanceMethod = (
+    advanceMethod:
+        | InteractiveFlowAdvanceMethod
+        | InteractiveFlowAdvanceMethod[],
+    deepDiveIndex: number,
+): InteractiveFlowAdvanceMethod => {
+    if (Array.isArray(advanceMethod)) {
+        return advanceMethod[deepDiveIndex] ?? advanceMethod.at(-1) ?? 'submit'
+    }
+
+    return advanceMethod
 }
 
 const answerDeepDiveQuestion = async ({
@@ -492,10 +507,13 @@ export const handleDeepDiveLoop = async ({
 
         await waitForInterviewerAudioToFinishOrCompletion(flow, page)
         previousQuestionText = questionText
-        deepDiveCount++
 
         await answerDeepDiveQuestion({
             ...deepDiveOptions,
+            deepDiveAdvanceMethod: resolveDeepDiveAdvanceMethod(
+                deepDiveOptions.deepDiveAdvanceMethod,
+                deepDiveCount,
+            ),
             flow,
             interviewQuestionPage,
             questionRecords,
@@ -503,6 +521,7 @@ export const handleDeepDiveLoop = async ({
             totalLeadUpQuestions,
             virtualMicrophone,
         })
+        deepDiveCount++
     }
 
     await waitForNextLeadUpOrCompletion({
