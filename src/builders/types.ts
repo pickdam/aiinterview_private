@@ -19,6 +19,7 @@ export interface QuestionConfig {
   timeLimit?: number; // seconds
   maxDeepDives?: number;
   minDeepDives?: number;
+  questionCustomSystemPromptId?: number | null;
 }
 
 // Text question configuration

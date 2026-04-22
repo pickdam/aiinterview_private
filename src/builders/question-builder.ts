@@ -39,6 +39,11 @@ export class QuestionBuilder {
     return this;
   }
 
+  customSystemPrompt(promptId: number | null): this {
+    this.config.questionCustomSystemPromptId = promptId;
+    return this;
+  }
+
   /** Internal: extract the config (not for external use) */
   _toConfig(): QuestionConfig {
     if (!this.config.transcript || !this.config.category) {

@@ -29,6 +29,7 @@ export interface QuestionWithTimeLimit {
   answer_time_limit: number;
   max_deep_dives?: number;
   min_deep_dives?: number;
+  interactive_interview_question_custom_system_prompt_id?: number | null;
 }
 
 export interface TextQuestionWithSettings {
@@ -131,6 +132,10 @@ export interface UpdateInterviewFlowCustomSystemPromptRequest {
   interactive_interview_custom_system_prompt_id?: number | null;
 }
 
+export interface UpdateInteractiveInterviewQuestionCustomSystemPromptRequest {
+  interactive_interview_question_custom_system_prompt_id?: number | null;
+}
+
 export interface UpdateQuestionDeepDiveLimitsRequest {
   max_deep_dives: number;
   min_deep_dives: number;
@@ -217,6 +222,18 @@ export interface InteractiveInterviewCustomSystemPromptUpdateRequest {
   description?: string | null;
 }
 
+export interface InteractiveInterviewQuestionCustomSystemPromptCreateRequest {
+  name: string;
+  system_prompt: string;
+  description?: string | null;
+}
+
+export interface InteractiveInterviewQuestionCustomSystemPromptUpdateRequest {
+  name?: string | null;
+  system_prompt?: string | null;
+  description?: string | null;
+}
+
 export interface InterviewSessionMemoCreateUpdateRequest {
   content: string;
 }
@@ -295,6 +312,29 @@ export interface InteractiveInterviewCustomSystemPrompt {
   description?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface InteractiveInterviewQuestionCustomSystemPrompt {
+  interactive_interview_question_custom_system_prompt_id: number;
+  name: string;
+  system_prompt: string;
+  description?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InteractiveInterviewQuestionCustomSystemPromptCreateResponse {
+  message: string;
+  interactive_interview_question_custom_system_prompt_id: number;
+}
+
+export interface InteractiveInterviewQuestionCustomSystemPromptUpdateResponse {
+  message: string;
+  interactive_interview_question_custom_system_prompt_id: number;
+}
+
+export interface InteractiveInterviewQuestionCustomSystemPromptDeleteResponse {
+  message: string;
 }
 
 export interface InterviewSessionMemo {

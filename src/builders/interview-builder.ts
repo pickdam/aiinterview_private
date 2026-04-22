@@ -199,6 +199,8 @@ export class InterviewBuilder {
         answer_time_limit: q.timeLimit || 60,
         max_deep_dives: q.maxDeepDives,
         min_deep_dives: q.minDeepDives,
+        interactive_interview_question_custom_system_prompt_id:
+          q.questionCustomSystemPromptId,
       })),
       text_questions:
         textQuestionIds.length > 0

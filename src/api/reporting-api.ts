@@ -13,6 +13,8 @@ import type {
   FeedbackPromptUpdateRequest,
   InteractiveInterviewCustomSystemPromptCreateRequest,
   InteractiveInterviewCustomSystemPromptUpdateRequest,
+  InteractiveInterviewQuestionCustomSystemPromptCreateRequest,
+  InteractiveInterviewQuestionCustomSystemPromptUpdateRequest,
   InterviewSessionMemoCreateUpdateRequest,
   InterviewStatusEnum,
   LoginChallengeRequest,
@@ -25,6 +27,7 @@ import type {
   SsoCallbackRequest,
   SummaryPromptCreateRequest,
   TenantSsoConfigUpsertRequest,
+  UpdateInteractiveInterviewQuestionCustomSystemPromptRequest,
   UpdateInterviewFlowCustomSystemPromptRequest,
   UpdateInterviewFlowFeedbackRequest,
   UpdateInterviewSessionProgress,
@@ -316,6 +319,20 @@ export class ReportingApi {
     const path =
       `interview_flows/${interviewFlowId}` +
       `/questions/${questionId}/deep_dive_limits`;
+    return this.request.patch(this.url(path), {
+      data,
+      headers: this.authHeaders(),
+    });
+  }
+
+  async updateInteractiveInterviewQuestionCustomSystemPrompt(
+    interviewFlowId: number,
+    questionId: number,
+    data: UpdateInteractiveInterviewQuestionCustomSystemPromptRequest,
+  ): Promise<APIResponse> {
+    const path =
+      `interview_flows/${interviewFlowId}` +
+      `/questions/${questionId}/custom_system_prompt`;
     return this.request.patch(this.url(path), {
       data,
       headers: this.authHeaders(),
@@ -775,6 +792,50 @@ export class ReportingApi {
   async deleteCustomSystemPrompt(promptId: number): Promise<APIResponse> {
     return this.request.delete(
       this.url(`interactive_interview_custom_system_prompts/${promptId}`),
+      { headers: this.authHeaders() },
+    );
+  }
+
+  // ── Interactive Interview Question Custom System Prompts ─
+
+  async getQuestionCustomSystemPrompts(): Promise<APIResponse> {
+    return this.request.get(
+      this.url("interactive_interview_question_custom_system_prompts"),
+      { headers: this.authHeaders() },
+    );
+  }
+
+  async createQuestionCustomSystemPrompt(
+    data: InteractiveInterviewQuestionCustomSystemPromptCreateRequest,
+  ): Promise<APIResponse> {
+    return this.request.post(
+      this.url("interactive_interview_question_custom_system_prompts"),
+      { data, headers: this.authHeaders() },
+    );
+  }
+
+  async getQuestionCustomSystemPrompt(promptId: number): Promise<APIResponse> {
+    return this.request.get(
+      this.url(`interactive_interview_question_custom_system_prompts/${promptId}`),
+      { headers: this.authHeaders() },
+    );
+  }
+
+  async updateQuestionCustomSystemPrompt(
+    promptId: number,
+    data: InteractiveInterviewQuestionCustomSystemPromptUpdateRequest,
+  ): Promise<APIResponse> {
+    return this.request.patch(
+      this.url(`interactive_interview_question_custom_system_prompts/${promptId}`),
+      { data, headers: this.authHeaders() },
+    );
+  }
+
+  async deleteQuestionCustomSystemPrompt(
+    promptId: number,
+  ): Promise<APIResponse> {
+    return this.request.delete(
+      this.url(`interactive_interview_question_custom_system_prompts/${promptId}`),
       { headers: this.authHeaders() },
     );
   }
