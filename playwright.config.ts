@@ -66,7 +66,7 @@ export default defineConfig({
       fullyParallel: false, // Don't run in parallel or we might overload auth0
     },
     {
-      name: "All Tests",
+      name: "Chrome",
       dependencies: ["Log in all accounts"],
       fullyParallel: true,
     },
