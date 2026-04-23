@@ -116,14 +116,23 @@ const prepareSampleRateInterview = async (
   page: Page,
   interviewUrl: string,
   flow: InterviewFlowActions,
+  sampleRateHz: number,
   testInfo: TestInfo,
+  virtualMicrophone: VirtualMicrophone,
 ): Promise<void> => {
   const applicantName = withBrowserApplicantPrefix(
     testInfo,
-    `Sample-rate (${sampleRatesHz}) applicant - ${sampleRateFlowConfig.providerLabel} - ${sampleRateFlowConfig.languageLabel} - ${Date.now()}`,
+    `Sample-rate (${sampleRateHz}) applicant - ${sampleRateFlowConfig.providerLabel} - ${sampleRateFlowConfig.languageLabel} - ${Date.now()}`,
   );
 
   await page.goto(interviewUrl);
+  await test.step(`Virtual microphone audio node should use ${sampleRateHz} Hz`, async () => {
+    await expect
+      .poll(() => virtualMicrophone.getAudioContextSampleRate(), {
+        timeout: 10000,
+      })
+      .toBe(sampleRateHz);
+  });
   await flow.enterSetup(applicantName);
   await flow.completeMediaSetup();
   await flow.completeSampleQuestionWithTone();
@@ -278,13 +287,21 @@ test.describe("Interview Flow - Applicant audio sample rates @interview", () => 
         }),
       );
       const virtualMicrophone = new VirtualMicrophone(page, {
+        sampleRateHz,
         speechStartDelayMs: 1500,
         voice: sampleRateFlowConfig.ttsVoice,
       });
       const flow = new InterviewFlowActions({ page, virtualMicrophone });
 
       await virtualMicrophone.install();
-      await prepareSampleRateInterview(page, interviewUrl, flow, testInfo);
+      await prepareSampleRateInterview(
+        page,
+        interviewUrl,
+        flow,
+        sampleRateHz,
+        testInfo,
+        virtualMicrophone,
+      );
       await expect(page).toHaveURL(/\/interview\//);
 
       await answerCurrentQuestionWithAudio(

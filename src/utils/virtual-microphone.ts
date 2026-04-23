@@ -43,6 +43,7 @@ type VirtualMicrophoneWindow = Window & {
     durationMs: number,
     gainValue?: number,
   ) => Promise<number>;
+  __getApplicantMicSampleRate?: () => number;
   __playApplicantAnswerAudio?: (
     audioBase64: string,
     playbackOptions?: VirtualMicrophonePlaybackOptions,
@@ -397,7 +398,9 @@ export class VirtualMicrophone {
           };
         }
 
-        const audioContext = new AudioContext();
+        const audioContext = new AudioContext({
+          sampleRate: options.sampleRateHz,
+        });
         const destination = audioContext.createMediaStreamDestination();
 
         win.__aiInterviewAudioContext = audioContext;
@@ -484,6 +487,10 @@ export class VirtualMicrophone {
       document.addEventListener("click", resumeVirtualMicrophone, true);
       document.addEventListener("keydown", resumeVirtualMicrophone, true);
       document.addEventListener("pointerdown", resumeVirtualMicrophone, true);
+
+      win.__getApplicantMicSampleRate = () => {
+        return ensureVirtualMicrophone().audioContext.sampleRate;
+      };
 
       win.__emitApplicantMicTone = async (
         durationMs: number,
@@ -728,6 +735,19 @@ export class VirtualMicrophone {
     return this.playAudioBase64(
       await createSpeechAudioBase64FromTextInput(input, this.options),
     );
+  }
+
+  async getAudioContextSampleRate(): Promise<number> {
+    return this.page.evaluate(() => {
+      const getSampleRate = (window as VirtualMicrophoneWindow)
+        .__getApplicantMicSampleRate;
+
+      if (!getSampleRate) {
+        throw new Error("Virtual microphone sample-rate helper was not installed");
+      }
+
+      return getSampleRate();
+    });
   }
 
   async resetObservedAudioPlayback(): Promise<void> {
