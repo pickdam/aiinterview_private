@@ -22,13 +22,13 @@ test.describe('Evaluation: setting result on a candidate row @org', () => {
   // old not.toBeVisible() check would fail if a second session remained in the view after the
   // first was moved to a different status.
 
-  test('should show "評価待ち" as the default evaluation for candidates on the pending-review page', async ({ pageAdmin }) => {
+  test('should show pending review as the default evaluation for candidates on the pending-review page', async ({ pageAdmin }) => {
     const home = new Home(pageAdmin);
     await home.goto();
     await home.sidebarFilterPendingReview.click();
     // Wait for SPA navigation to the filtered view before asserting row content.
     await expect(pageAdmin).toHaveURL(/status=pending_review/);
-    await expect(home.getRowEvaluationCombobox(0)).toHaveText(/評価待ち/);
+    await expect(home.getRowEvaluationCombobox(0)).toHaveText(/評価待ち|Pending Review/i);
   });
 
   test('should open the evaluation listbox with all options when the combobox is clicked', async ({ pageAdmin }) => {
@@ -38,10 +38,10 @@ test.describe('Evaluation: setting result on a candidate row @org', () => {
     await expect(pageAdmin).toHaveURL(/status=pending_review/);
     await home.getRowEvaluationCombobox(0).click();
     await expect(home.interviewFilterListbox).toBeVisible();
-    await expect(home.getInterviewFilterOption('評価待ち')).toBeVisible();
-    await expect(home.getInterviewFilterOption('選考通過')).toBeVisible();
-    await expect(home.getInterviewFilterOption('不合格')).toBeVisible();
-    await expect(home.getInterviewFilterOption('終了')).toBeVisible();
+    await expect(home.getInterviewFilterOption(/評価待ち|Pending Review/i)).toBeVisible();
+    await expect(home.getInterviewFilterOption(/選考通過|Passed/i)).toBeVisible();
+    await expect(home.getInterviewFilterOption(/不合格|Failed/i)).toBeVisible();
+    await expect(home.getInterviewFilterOption(/終了|Closed/i)).toBeVisible();
   });
 
   test('should decrement the pending-review counter and increment the passed counter when evaluation is set to 選考通過', async ({ pageAdmin }) => {
@@ -66,7 +66,7 @@ test.describe('Evaluation: setting result on a candidate row @org', () => {
 
     // Change evaluation
     await home.getRowEvaluationCombobox(0).click();
-    await home.getInterviewFilterOption('選考通過').click();
+    await home.getInterviewFilterOption(/選考通過|Passed/i).click();
 
     // Wait for exactly one of this candidate's sessions to leave the pending_review view,
     // confirming the API call completed before we check the sidebar counters.
@@ -96,7 +96,7 @@ test.describe('Evaluation: setting result on a candidate row @org', () => {
 
     // Change evaluation — one session should leave this filtered view.
     await home.getRowEvaluationCombobox(0).click();
-    await home.getInterviewFilterOption('選考通過').click();
+    await home.getInterviewFilterOption(/選考通過|Passed/i).click();
 
     // After evaluation change, exactly one fewer session for this candidate appears
     // in the pending_review list (the other sessions, if any, remain unchanged).
@@ -119,7 +119,7 @@ test.describe('Evaluation: setting result on a candidate row @org', () => {
 
     // Change to 選考通過 and wait for the API call to complete before navigating away.
     await home.getRowEvaluationCombobox(0).click();
-    await home.getInterviewFilterOption('選考通過').click();
+    await home.getInterviewFilterOption(/選考通過|Passed/i).click();
     await expect(pageAdmin.locator('tbody tr').filter({ hasText: candidateName })).toHaveCount(rowsBefore - 1, { timeout: 15_000 });
 
     // Navigate to passed — wait for URL to settle, then verify the counter increased.
@@ -145,7 +145,7 @@ test.describe('Evaluation: setting result on a candidate row @org', () => {
     const rowsBefore     = await home.getRowCountWithText(candidateName);
 
     await home.getRowEvaluationCombobox(0).click();
-    await home.getInterviewFilterOption('不合格').click();
+    await home.getInterviewFilterOption(/不合格|Failed/i).click();
 
     // Wait for the specific session to leave the pending_review view.
     await expect(pageAdmin.locator('tbody tr').filter({ hasText: candidateName })).toHaveCount(rowsBefore - 1, { timeout: 15_000 });

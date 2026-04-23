@@ -55,16 +55,16 @@ export class Home {
     this.interviewFilterListbox = this.page.getByRole('listbox');
     this.candidateSearchInput   = this.page.getByPlaceholder(/受験者名・メールアドレスで検索|Search by name or email/i);
     this.exportButton           = this.page.getByRole('button', { name: /エクスポート|Export/i });
-    this.resultCountHeader      = this.page.getByText(/^表示:/);
+    this.resultCountHeader      = this.page.getByText(/^(表示|Showing):/);
     this.exportConfirmOkButton     = this.page.getByRole('button', { name: 'OK' });
-    this.exportConfirmCancelButton = this.page.getByRole('button', { name: /キャンセル|Export/i });
+    this.exportConfirmCancelButton = this.page.getByRole('button', { name: /キャンセル|Cancel/i });
 
     this.memoPopover      = this.page.getByRole('dialog');
-    this.memoCloseButton   = this.memoPopover.getByLabel('閉じる');
-    this.memoAddButton     = this.memoPopover.getByRole('button', { name: /メモを追加|Add Memo/i });
-    this.memoTextarea      = this.memoPopover.getByPlaceholder(/メモを追加|Add Memo/i);
+    this.memoCloseButton   = this.memoPopover.getByLabel(/閉じる|Close/i);
+    this.memoAddButton     = this.memoPopover.getByRole('button', { name: /メモを追加|Add memo/i });
+    this.memoTextarea      = this.memoPopover.getByPlaceholder(/メモを追加|Add memo/i);
     this.memoCancelButton  = this.memoPopover.getByRole('button', { name: /キャンセル|Cancel/i });
-    this.memoSaveButton    = this.memoPopover.getByRole('button', { name: /保存する|Save/ });
+    this.memoSaveButton    = this.memoPopover.getByRole('button', { name: /保存する|Save/i });
     this.memoConfirmDialog = this.page.getByRole('alertdialog');
     this.memoConfirmButton = this.memoConfirmDialog.getByRole('button', { name: /更新する|Update/i });
 
@@ -86,7 +86,7 @@ export class Home {
   }
 
   getMemoButton(rowIndex: number = 0): Locator {
-    return this.page.locator('tbody tr').nth(rowIndex).getByRole('button', { name: /メモを開く|Open/i });
+    return this.page.locator('tbody tr').nth(rowIndex).getByRole('button', { name: /メモを開く|Open memo/i });
   }
 
   getMemoIconHasMemo(rowIndex: number = 0): Locator {
@@ -98,14 +98,14 @@ export class Home {
   }
 
   getMemoContentButton(memoText: string): Locator {
-    return this.memoPopover.getByRole('button', { name: memoText });
+    return this.memoPopover.getByRole('button').filter({ hasText: memoText });
   }
 
   getMemoButtonByCandidate(candidateName: string): Locator {
     return this.page.locator('tbody tr')
       .filter({ hasText: candidateName })
       .filter({ has: this.page.locator('.lucide-file-text') })
-      .getByRole('button', { name: /メモを開く|Open/i });
+      .getByRole('button', { name: /メモを開く|Open memo/i });
   }
 
   getMemoIconHasMemoByCandidate(candidateName: string): Locator {
@@ -147,7 +147,7 @@ export class Home {
     return this.page
       .locator('tbody tr')
       .filter({ hasText: email })
-      .getByRole('button', { name: 'メモを開く' });
+      .getByRole('button', { name: /メモを開く|Open memo/i });
   }
 
   getMemoIconHasMemoByEmail(email: string): Locator {
@@ -165,11 +165,10 @@ export class Home {
     await this.candidateSearchInput.clear();
     await this.candidateSearchInput.fill(email);
     await expect(this.page.locator('tbody tr')).toHaveCount(1);
-    await this.page
+    await expect(this.page
       .locator('tbody tr')
       .filter({ hasText: email })
-      .first()
-      .waitFor({ state: 'visible' });
+      .first()).toBeVisible({ timeout: 30000 });
   }
 
   async openReport(){

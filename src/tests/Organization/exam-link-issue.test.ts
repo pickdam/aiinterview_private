@@ -6,6 +6,7 @@ test.describe('Exam Link issue - self delivery @org', () => {
     let commonLink: string;
 
     test.beforeEach(async ({ apiAdmin }) => {
+        const timestamp = Date.now();
         // 1. Create a question
         const questionResp = await apiAdmin.createInterviewQuestion({
             transcript: 'あなたの強みについて教えてください。',
@@ -13,12 +14,13 @@ test.describe('Exam Link issue - self delivery @org', () => {
             company_id: 1,
             language: 'ja',
         });
+        await expect(questionResp).toBeOK();
         const { interview_question_id: questionId } = await questionResp.json();
 
         // 2. Create an interview flow with that question
         const flowResp = await apiAdmin.createInterviewFlow({
             registering_company_id: 1,
-            interview_name: `E2E Exam Link ${Date.now()}`,
+            interview_name: `E2E Exam Link ${timestamp}`,
             interview_description: 'E2E test for exam link self-delivery',
             is_interactive: false,
             ui_version: 2,
@@ -29,6 +31,7 @@ test.describe('Exam Link issue - self delivery @org', () => {
             interview_instructions_page_url:
                 'https://givery.notion.site/AI-2146931cc44980e28f86f5aef23d9943',
         });
+        await expect(flowResp).toBeOK();
         const { interview_flow_id: flowId } = await flowResp.json();
 
         // 3. Create a common link (reusable for self-delivery)
@@ -37,6 +40,7 @@ test.describe('Exam Link issue - self delivery @org', () => {
             registering_company_id: 1,
             max_uses: 100,
         });
+        await expect(linkResp).toBeOK();
         const { common_link } = await linkResp.json();
 
         commonLink = common_link;

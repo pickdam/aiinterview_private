@@ -87,12 +87,13 @@ test.describe('Memo: creating and updating candidate memos @org', () => {
 
     await home.memoTextarea.fill(FIRST_MEMO);
     await home.memoSaveButton.click({ force: true });
+    await home.memoConfirmButton.waitFor({timeout: 5000});
     await home.memoConfirmButton.click({ force: true });
 
-    await expect(home.memoPopover).not.toBeVisible();
+    await expect(home.memoPopover).toBeHidden();
 
     await expect(home.getMemoIconHasMemo(memoRowIndex)).toBeVisible();
-    await expect(home.getMemoIconNoMemo(memoRowIndex)).not.toBeVisible();
+    await expect(home.getMemoIconNoMemo(memoRowIndex)).toBeHidden();
   });
 
   test('should display the saved memo content when the popover is reopened', async ({ pageAdmin }) => {
@@ -106,7 +107,7 @@ test.describe('Memo: creating and updating candidate memos @org', () => {
     await expect(home.getMemoContentButton(FIRST_MEMO)).toBeEnabled();
 
     await home.memoCloseButton.click({ force: true });
-    await expect(home.memoPopover).not.toBeVisible();
+    await expect(home.memoPopover).toBeHidden();
   });
 
   test('should update the memo content and persist the change', async ({ pageAdmin }) => {
@@ -126,7 +127,7 @@ test.describe('Memo: creating and updating candidate memos @org', () => {
     await home.memoSaveButton.click({ force: true });
     await home.memoConfirmButton.click({ force: true });
 
-    await expect(home.memoPopover).not.toBeVisible();
+    await expect(home.memoPopover).toBeHidden();
 
     await home.gotoURL(memoCandidateViewURL);
     await home.searchCandidateByEmail(seededEmail);

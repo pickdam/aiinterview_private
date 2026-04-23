@@ -28,39 +28,54 @@ LM_STUDIO_BASE_URL='http://localhost:1234/v1'
 
 ## Running Tests
 
-Run all Chromium-backed tests with one worker:
+Run all Chrome-backed tests with one worker:
 
 ```bash
-npx playwright test --project="All Tests" --workers=1
+npx playwright test --project="Chrome" --workers=1
 ```
 
 Run a single file:
 
 ```bash
-npx playwright test src/tests/Interview/non-interactive-flow.test.ts --project="All Tests" --workers=1
+npx playwright test src/tests/Interview/non-interactive-flow.test.ts --project="Chrome" --workers=1
 ```
 
 Run only organization tests:
 
 ```bash
-npx playwright test --grep @org --project="All Tests" --workers=1
+npx playwright test --grep @org --project="Chrome" --workers=1
 ```
 
 Run only interview tests:
 
 ```bash
-npx playwright test --grep @interview --project="All Tests" --workers=1
+npx playwright test --grep @interview --project="Chrome" --workers=1
+```
+
+Run organization or interview tests across all browser projects one by one, preserving HTML reports and a compressed archive:
+
+```bash
+scripts/run-tagged-browser-suite.sh org
+scripts/run-tagged-browser-suite.sh interview
+```
+
+The runner writes uncompressed reports to `test-reports/runs/<suite>-<timestamp>/` and creates `test-reports/archives/<suite>-<timestamp>.tar.gz`.
+
+You can override the browser list or worker count:
+
+```bash
+BROWSERS="Chrome Firefox Edge" WORKERS=1 scripts/run-tagged-browser-suite.sh interview
 ```
 
 Available projects currently include:
 
 - `Log in all accounts`
-- `All Tests`
+- `Chrome`
 - `Firefox`
 - `Edge`
 - `Safari`
 
-On Windows, use `All Tests`, `Firefox`, and `Edge`. The `Safari` project is WebKit-based and is not real Safari on Windows.
+On Windows, use `Chrome`, `Firefox`, and `Edge`. The `Safari` project is WebKit-based and is not real Safari on Windows.
 
 ## Virtual Microphone
 

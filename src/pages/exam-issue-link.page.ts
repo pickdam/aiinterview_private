@@ -20,8 +20,8 @@ export class ExamIssueLink {
     this.TOSLink = this.page.getByText(/Terms of Service/i).first()
     this.privacyPolicyLink = this.page.getByText(/Privacy Policy/i).first()
     this.thirdPartyAgreeBtn = this.page.locator('button[id="third-party-agree"]')
-    this.submitBtn = this.page.getByRole('button',{name: /Send instructions email/i})
-    this.successMessage = this.page.getByText(/Instructions email sent!/i)
+    this.submitBtn = this.page.getByRole('button',{name: /Send instructions email|案内メールを送信|説明メールを送信/i})
+    this.successMessage = this.page.getByText(/Instructions email sent!|案内メールを送信しました|説明メールを送信しました/i)
   }
 
   async goto(commonLink: string) {
