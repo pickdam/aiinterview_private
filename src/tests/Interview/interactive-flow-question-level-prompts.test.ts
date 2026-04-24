@@ -180,21 +180,12 @@ const patchQuestionLevelPrompt = async (
 
 const seedQuestionLevelPromptInterview = async (
   apiAdmin: ReportingApi,
+  companyId: number,
   scenario: QuestionLevelPromptScenario,
 ): Promise<SeededQuestionLevelPromptInterview> => {
   const timestamp = Date.now();
   const seededEmail = `product-dev_qa+ai+interactive+question-prompt+${scenario.language}+${timestamp}@givery.co.jp`;
   const promptIds = await createQuestionLevelPrompts(apiAdmin, timestamp);
-
-  const companyResp = await apiAdmin.createCompany({
-    company_name: `E2E Interactive Question Prompt ${scenario.providerLabel} ${scenario.languageLabel} ${timestamp}`,
-    stt_provider: scenario.sttProvider,
-  });
-  await expect(companyResp).toBeOK();
-
-  const { company_id: companyId } = (await companyResp.json()) as {
-    company_id: number;
-  };
 
   const interviewBuilder = new InterviewBuilder(apiAdmin)
     .forCompany(companyId)
@@ -305,12 +296,14 @@ test.describe("Interview Flow - Interactive question-level prompts @interview", 
   for (const scenario of questionLevelPromptScenarios) {
     test(`Question-level prompts should apply only to configured deep dives in ${scenario.languageLabel}`, async ({
       freshApiAdmin: apiAdmin,
+      interviewCompanyIds,
       page,
     }, testInfo) => {
       test.setTimeout(questionLevelPromptTestTimeoutMs);
 
       const seededInterview = await seedQuestionLevelPromptInterview(
         apiAdmin,
+        interviewCompanyIds[scenario.sttProvider],
         scenario,
       );
       const applicantName = withBrowserApplicantPrefix(

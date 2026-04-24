@@ -6,7 +6,6 @@ import type { InterviewLanguage, SttProvider } from "@src/api/types";
 import { InterviewBuilder } from "@src/builders/interview-builder";
 import { expect, test } from "@src/fixtures/fixtures";
 import { refreshAdminBrowserAuth } from "@src/utils/api-auth";
-import { Home } from "@src/pages/home.page";
 import { InterviewQuestionPage } from "@src/pages/interview-question.page";
 import { ReportPage } from "@src/pages/report.page";
 import {
@@ -47,8 +46,8 @@ type ManyQuestionsFlowConfig = {
 };
 
 type SeededInterview = {
+  interviewSessionId: number;
   interviewUrl: string;
-  seededEmail: string;
 };
 
 const manyQuestionsFlowConfig = {
@@ -124,15 +123,10 @@ const visibleInterviewErrorPattern =
 
 const seedManyQuestionsInterview = async (
   apiAdmin: ReportingApi,
+  companyId: number,
 ): Promise<SeededInterview> => {
   const timestamp = Date.now();
   const seededEmail = `product-dev_qa+ai+many-questions+${timestamp}@givery.co.jp`;
-
-  const companyResp = await apiAdmin.createCompany({
-    company_name: `E2E Many Questions ${manyQuestionsFlowConfig.providerLabel} ${manyQuestionsFlowConfig.languageLabel} ${timestamp}`,
-    stt_provider: manyQuestionsFlowConfig.sttProvider,
-  });
-  const { company_id: companyId } = await companyResp.json();
 
   const interviewBuilder = new InterviewBuilder(apiAdmin)
     .forCompany(companyId)
@@ -158,8 +152,8 @@ const seedManyQuestionsInterview = async (
   const interview = await interviewBuilder.build();
 
   return {
+    interviewSessionId: interview.interviewSessionId,
     interviewUrl: interview.interviewUrl,
-    seededEmail,
   };
 };
 
@@ -307,22 +301,13 @@ const expectInterviewToFinish = async (page: Page): Promise<void> => {
 
 const openGeneratedReport = async (
   pageAdmin: Page,
-  seededEmail: string,
+  interviewSessionId: number,
 ): Promise<ReportPage> => {
-  const dashboard = new Home(pageAdmin);
-
   await refreshAdminBrowserAuth(pageAdmin);
-  await dashboard.goto();
-  await dashboard.searchCandidateByEmail(seededEmail);
-  await expect(dashboard.openReportLink).toBeVisible({
-    timeout: 180000,
-  });
-
-  const [reportTab] = await Promise.all([
-    pageAdmin.waitForEvent("popup"),
-    dashboard.openReport(),
-  ]);
+  const reportTab = await pageAdmin.context().newPage();
   const reportPage = new ReportPage(reportTab);
+
+  await reportPage.goto(interviewSessionId);
 
   await reportTab.waitForLoadState("domcontentloaded");
   await reportTab.bringToFront();
@@ -386,13 +371,17 @@ const expectReportTranscriptions = async (
 test.describe("Interview Flow - Non-interactive many questions @interview", () => {
   test("A Japanese non-interactive flow should handle ten answered questions with one timeout", async ({
     freshApiAdmin: apiAdmin,
+    interviewCompanyIds,
     page,
     pageAdmin,
   }, testInfo) => {
     test.setTimeout(manyQuestionsTestTimeoutMs);
 
-    const { interviewUrl, seededEmail } =
-      await seedManyQuestionsInterview(apiAdmin);
+    const { interviewSessionId, interviewUrl } =
+      await seedManyQuestionsInterview(
+        apiAdmin,
+        interviewCompanyIds[manyQuestionsFlowConfig.sttProvider],
+      );
     const questionCases = manyQuestionsFlowConfig.questions.map(
       ({ answer, question }, questionIndex) => ({
         answer,
@@ -463,7 +452,7 @@ test.describe("Interview Flow - Non-interactive many questions @interview", () =
     await flow.submitCurrentQuestion();
     await expectInterviewToFinish(page);
 
-    const reportPage = await openGeneratedReport(pageAdmin, seededEmail);
+    const reportPage = await openGeneratedReport(pageAdmin, interviewSessionId);
 
     await expectReportTranscriptions(
       reportPage,

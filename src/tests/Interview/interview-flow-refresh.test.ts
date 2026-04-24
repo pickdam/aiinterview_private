@@ -38,16 +38,11 @@ const refreshTestTimeoutMs = 180000;
 
 const seedRefreshInterview = async (
   apiAdmin: ReportingApi,
+  companyId: number,
   timeLimitSeconds: number,
 ): Promise<string> => {
   const timestamp = Date.now();
   const seededEmail = `product-dev_qa+ai+refresh+${timeLimitSeconds}+${timestamp}@givery.co.jp`;
-
-  const companyResp = await apiAdmin.createCompany({
-    company_name: `E2E Refresh ${refreshFlowConfig.providerLabel} ${refreshFlowConfig.languageLabel} ${timestamp}`,
-    stt_provider: refreshFlowConfig.sttProvider,
-  });
-  const { company_id: companyId } = await companyResp.json();
 
   const interviewBuilder = new InterviewBuilder(apiAdmin)
     .forCompany(companyId)
@@ -206,12 +201,17 @@ const expectInterviewToFinish = async (page: Page): Promise<void> => {
 test.describe("Interview Flow - Refresh related cases @interview", () => {
   test("Refreshing after the first question timer starts should restart from the first question", async ({
     freshApiAdmin: apiAdmin,
+    interviewCompanyIds,
     page,
   }, testInfo) => {
     test.setTimeout(refreshTestTimeoutMs);
 
     const timeLimitSeconds = 30;
-    const interviewUrl = await seedRefreshInterview(apiAdmin, timeLimitSeconds);
+    const interviewUrl = await seedRefreshInterview(
+      apiAdmin,
+      interviewCompanyIds[refreshFlowConfig.sttProvider],
+      timeLimitSeconds,
+    );
     const virtualMicrophone = new VirtualMicrophone(page);
     const flow = new InterviewFlowActions({ page, virtualMicrophone });
 
@@ -249,12 +249,17 @@ test.describe("Interview Flow - Refresh related cases @interview", () => {
 
   test("Refreshing after the first question is submitted should restart from the last question", async ({
     freshApiAdmin: apiAdmin,
+    interviewCompanyIds,
     page,
   }, testInfo) => {
     test.setTimeout(refreshTestTimeoutMs);
 
     const timeLimitSeconds = 5;
-    const interviewUrl = await seedRefreshInterview(apiAdmin, timeLimitSeconds);
+    const interviewUrl = await seedRefreshInterview(
+      apiAdmin,
+      interviewCompanyIds[refreshFlowConfig.sttProvider],
+      timeLimitSeconds,
+    );
     const virtualMicrophone = new VirtualMicrophone(page);
     const flow = new InterviewFlowActions({ page, virtualMicrophone });
 

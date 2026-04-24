@@ -1,6 +1,6 @@
 import { setTimeout as wait } from "node:timers/promises";
 
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { InterviewFlowEntryPage } from "@src/pages/interview-flow-entry.page";
 import { InterviewFlowMediaSetupPage } from "@src/pages/interview-flow-media-setup.page";
 import { InterviewQuestionPage } from "@src/pages/interview-question.page";
@@ -23,6 +23,8 @@ type ToneAnswerOptions = {
 
 const pollIntervalMs = 100;
 const mediaSetupToneGain = 8;
+const startPracticeQuestionButtonName =
+  /Start Practice Question|練習.*質問.*開始|練習.*開始/i;
 
 const waitFor = async (
   condition: () => Promise<boolean>,
@@ -45,6 +47,20 @@ const waitFor = async (
   }
 
   throw new Error(message);
+};
+
+const isVisible = async (locator: Locator): Promise<boolean> => {
+  return locator.isVisible().catch(() => false);
+};
+
+const waitForVisible = async (
+  locator: Locator,
+  timeoutMs: number,
+): Promise<boolean> => {
+  return locator
+    .waitFor({ state: "visible", timeout: timeoutMs })
+    .then(() => true)
+    .catch(() => false);
 };
 
 export const formatTimer = (seconds: number): string => {
@@ -149,7 +165,8 @@ export class InterviewFlowActions {
   }: ToneAnswerOptions = {}): Promise<void> {
     const sampleQuestionPage = new InterviewQuestionPage(this.page);
 
-    await sampleQuestionPage.interviewerPreview.waitFor({ timeout: 10000 });
+    await this.startPracticeQuestionIfNeeded();
+    await sampleQuestionPage.interviewerPreview.waitFor({ timeout: 30000 });
     await this.waitForInterviewerAudioToFinish();
     await this.virtualMicrophone.emitTone(toneMs);
     await wait(toneMs);
@@ -161,11 +178,7 @@ export class InterviewFlowActions {
 
     await interviewStartPage.startInterviewBtn.waitFor({ timeout: 15000 });
     await interviewStartPage.clickStartInterview();
-    await interviewStartPage.audioConfirmationDialog.waitFor({
-      timeout: 10000,
-    });
-    await this.virtualMicrophone.resetObservedAudioPlayback();
-    await interviewStartPage.clickAudioConfirmationStart();
+    await this.confirmAudioDialog();
   }
 
   async submitCurrentQuestion(): Promise<void> {
@@ -220,5 +233,52 @@ export class InterviewFlowActions {
         element.srcObject = null;
       }
     });
+  }
+
+  private async startPracticeQuestionIfNeeded(): Promise<void> {
+    const sampleQuestionPage = new InterviewQuestionPage(this.page);
+    const startPracticeQuestionButton = this.page.getByRole("button", {
+      name: startPracticeQuestionButtonName,
+    });
+
+    await waitFor(
+      async () =>
+        (await isVisible(sampleQuestionPage.interviewerPreview)) ||
+        (await isVisible(startPracticeQuestionButton)),
+      {
+        message:
+          "Timed out waiting for the practice question screen to become ready",
+        timeoutMs: 30000,
+      },
+    );
+
+    if (!(await isVisible(startPracticeQuestionButton))) {
+      return;
+    }
+
+    await this.virtualMicrophone.resetObservedAudioPlayback();
+    await startPracticeQuestionButton.click();
+    await this.confirmAudioDialogIfPresent();
+  }
+
+  private async confirmAudioDialog(): Promise<void> {
+    const interviewStartPage = new InterviewStartPage(this.page);
+
+    await interviewStartPage.audioConfirmationDialog.waitFor({
+      timeout: 10000,
+    });
+    await this.virtualMicrophone.resetObservedAudioPlayback();
+    await interviewStartPage.clickAudioConfirmationStart();
+  }
+
+  private async confirmAudioDialogIfPresent(): Promise<void> {
+    const interviewStartPage = new InterviewStartPage(this.page);
+
+    if (!(await waitForVisible(interviewStartPage.audioConfirmationDialog, 5000))) {
+      return;
+    }
+
+    await this.virtualMicrophone.resetObservedAudioPlayback();
+    await interviewStartPage.clickAudioConfirmationStart();
   }
 }

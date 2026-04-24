@@ -21,19 +21,28 @@ export interface VirtualMicrophonePlaybackOptions {
 }
 
 export interface VirtualMicrophoneOptions extends TextToSpeechOptions {
+  preferNativeMedia?: boolean;
   speechStartDelayMs?: number;
   speechGain?: number;
   toneGain?: number;
 }
 
 type ResolvedVirtualMicrophoneOptions = Required<
-  Omit<VirtualMicrophoneOptions, "windowsVoice">
+  Omit<
+    VirtualMicrophoneOptions,
+    "preferNativeMedia" | "sampleRateHz" | "windowsVoice"
+  >
 > &
-  Pick<VirtualMicrophoneOptions, "windowsVoice">;
+  Pick<
+    VirtualMicrophoneOptions,
+    "preferNativeMedia" | "sampleRateHz" | "windowsVoice"
+  >;
 
 type VirtualMicrophoneWindow = Window & {
   __activeAudioPlayCount?: number;
   __aiInterviewAudioContext?: AudioContext;
+  __aiInterviewKeepAliveGain?: GainNode;
+  __aiInterviewKeepAliveSource?: ConstantSourceNode;
   __aiInterviewMicDestination?: MediaStreamAudioDestinationNode;
   __aiInterviewSyntheticVideoCanvas?: HTMLCanvasElement;
   __aiInterviewSyntheticVideoInterval?: number;
@@ -264,7 +273,8 @@ export class VirtualMicrophone {
   constructor(page: Page, options: VirtualMicrophoneOptions = {}) {
     this.page = page;
     this.options = {
-      sampleRateHz: options.sampleRateHz ?? 16000,
+      sampleRateHz: options.sampleRateHz,
+      preferNativeMedia: options.preferNativeMedia,
       speechStartDelayMs: options.speechStartDelayMs ?? 750,
       speechGain: options.speechGain ?? 4,
       toneGain: options.toneGain ?? 0.9,
@@ -334,6 +344,21 @@ export class VirtualMicrophone {
         });
       };
 
+      const shouldUseSyntheticVideo = () => {
+        if (typeof options.preferNativeMedia === "boolean") {
+          return !options.preferNativeMedia;
+        }
+
+        const userAgent = navigator.userAgent;
+
+        return (
+          /\bSafari\//.test(userAgent) &&
+          !/\b(?:Chrome|Chromium|Edg|OPR|CriOS|Firefox|FxiOS)\b/.test(
+            userAgent,
+          )
+        );
+      };
+
       const mediaPermissionNames = new Set(["camera", "microphone"]);
       const createGrantedPermissionStatus = (name: string) => {
         const status = new EventTarget() as PermissionStatus;
@@ -398,12 +423,25 @@ export class VirtualMicrophone {
           };
         }
 
-        const audioContext = new AudioContext({
-          sampleRate: options.sampleRateHz,
-        });
+        const audioContext =
+          options.sampleRateHz === undefined
+            ? new AudioContext()
+            : new AudioContext({
+                sampleRate: options.sampleRateHz,
+              });
         const destination = audioContext.createMediaStreamDestination();
+        const keepAliveSource = audioContext.createConstantSource();
+        const keepAliveGain = audioContext.createGain();
+
+        keepAliveSource.offset.value = 0;
+        keepAliveGain.gain.value = 0;
+        keepAliveSource.connect(keepAliveGain);
+        keepAliveGain.connect(destination);
+        keepAliveSource.start();
 
         win.__aiInterviewAudioContext = audioContext;
+        win.__aiInterviewKeepAliveGain = keepAliveGain;
+        win.__aiInterviewKeepAliveSource = keepAliveSource;
         win.__aiInterviewMicDestination = destination;
 
         return { audioContext, destination };
@@ -596,23 +634,38 @@ export class VirtualMicrophone {
             "video" in constraints &&
             constraints.video,
         );
+        const useSyntheticVideo = wantsVideo && shouldUseSyntheticVideo();
         let nativeStream: MediaStream;
 
-        try {
-          nativeStream = await withTimeout(
-            originalGetUserMedia(removeStaleDeviceIds(constraints)),
-            3000,
-          );
-        } catch (error) {
-          if (!wantsAudio && !wantsVideo) {
-            throw error;
-          }
-
-          nativeStream = new MediaStream();
+        if (!wantsAudio && !wantsVideo) {
+          return originalGetUserMedia(removeStaleDeviceIds(constraints));
         }
 
-        if (!wantsAudio && !wantsVideo) {
-          return nativeStream;
+        if (wantsVideo && !useSyntheticVideo) {
+          try {
+            nativeStream = await withTimeout(
+              originalGetUserMedia(
+                removeStaleDeviceIds({
+                  audio: false,
+                  video:
+                    constraints &&
+                    typeof constraints === "object" &&
+                    "video" in constraints
+                      ? constraints.video
+                      : true,
+                }),
+              ),
+              3000,
+            );
+          } catch (error) {
+            if (!wantsAudio) {
+              throw error;
+            }
+
+            nativeStream = new MediaStream();
+          }
+        } else {
+          nativeStream = new MediaStream();
         }
 
         const stream = new MediaStream();
@@ -621,7 +674,7 @@ export class VirtualMicrophone {
           stream.addTrack(track);
         }
 
-        if (wantsVideo && stream.getVideoTracks().length === 0) {
+        if (useSyntheticVideo && stream.getVideoTracks().length === 0) {
           for (const track of ensureSyntheticVideoStream().getVideoTracks()) {
             stream.addTrack(track);
           }
@@ -731,9 +784,17 @@ export class VirtualMicrophone {
     );
   }
 
-  async speak(input: TextAudioInput): Promise<number> {
+  async createSpeechAudioBase64(input: TextAudioInput): Promise<string> {
+    return createSpeechAudioBase64FromTextInput(input, this.options);
+  }
+
+  async speak(
+    input: TextAudioInput,
+    options: VirtualMicrophonePlaybackOptions = {},
+  ): Promise<number> {
     return this.playAudioBase64(
-      await createSpeechAudioBase64FromTextInput(input, this.options),
+      await this.createSpeechAudioBase64(input),
+      options,
     );
   }
 

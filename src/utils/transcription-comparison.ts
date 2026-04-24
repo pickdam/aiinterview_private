@@ -1,8 +1,8 @@
 export const transcriptionErrorPattern =
-  /error|failed|unsupported|not found|エラー|失敗|取得できません|読み込めません|見つかりません/i;
+  /error|failed|unsupported|not found|取得できません|読み込めません|見つかりません/i;
 
 export const reportGenerationErrorPattern =
-  /an error occurred|failed to|error|エラー|失敗|取得できません|読み込めません|見つかりません/i;
+  /an error occurred|failed to|取得できません|読み込めません|見つかりません/i;
 
 export const normalizeForTranscriptionComparison = (text: string): string => {
   return text

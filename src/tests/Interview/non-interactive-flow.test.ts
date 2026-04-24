@@ -2,7 +2,6 @@ import type { InterviewLanguage, SttProvider } from "@src/api/types";
 import { InterviewBuilder } from "@src/builders/interview-builder";
 import { expect, test } from "@src/fixtures/fixtures";
 import { refreshAdminBrowserAuth } from "@src/utils/api-auth";
-import { Home } from "@src/pages/home.page";
 import { InterviewQuestionPage } from "@src/pages/interview-question.page";
 import { ReportPage } from "@src/pages/report.page";
 import {
@@ -108,16 +107,12 @@ test.describe("Interview Flow - Non-interactive @interview", () => {
   for (const scenario of interviewFlowScenarios) {
     test.describe(`${scenario.languageLabel} - ${scenario.providerLabel}`, () => {
       let seededEmail: string;
+      let interviewSessionId: number;
       let interviewUrl: string;
 
-      test.beforeEach(async ({ freshApiAdmin: apiAdmin }) => {
+      test.beforeEach(async ({ freshApiAdmin: apiAdmin, interviewCompanyIds }) => {
         seededEmail = `product-dev_qa+ai+nonint+${scenario.language}+${scenario.sttProvider}+${Date.now()}@givery.co.jp`;
-
-        const companyResp = await apiAdmin.createCompany({
-          company_name: `E2E Non-interactive ${scenario.providerLabel} ${scenario.languageLabel} ${Date.now()}`,
-          stt_provider: scenario.sttProvider,
-        });
-        const { company_id: companyId } = await companyResp.json();
+        const companyId = interviewCompanyIds[scenario.sttProvider];
 
         const interviewBuilder = new InterviewBuilder(apiAdmin)
           .forCompany(companyId)
@@ -143,6 +138,7 @@ test.describe("Interview Flow - Non-interactive @interview", () => {
         }
 
         const interview = await interviewBuilder.build();
+        interviewSessionId = interview.interviewSessionId;
         interviewUrl = interview.interviewUrl;
       });
 
@@ -275,21 +271,11 @@ test.describe("Interview Flow - Non-interactive @interview", () => {
         });
 
         await test.step(`The Admin should be able to verify the transcription for the flow in ${scenario.languageLabel} with ${scenario.providerLabel}`, async () => {
-          const dashboard = new Home(pageAdmin);
-
           await refreshAdminBrowserAuth(pageAdmin);
-          await dashboard.goto();
-          await dashboard.searchCandidateByEmail(seededEmail);
-          await expect(dashboard.openReportLink).toBeVisible({
-            timeout: 120000,
-          });
-
-          const [reportTab] = await Promise.all([
-            pageAdmin.waitForEvent("popup"),
-            dashboard.openReport(),
-          ]);
+          const reportTab = await pageAdmin.context().newPage();
           const reportPage = new ReportPage(reportTab);
 
+          await reportPage.goto(interviewSessionId);
           await reportTab.waitForLoadState("domcontentloaded");
           await reportTab.bringToFront();
           await expect(async () => {

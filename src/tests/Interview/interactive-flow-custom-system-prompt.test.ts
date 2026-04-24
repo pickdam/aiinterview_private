@@ -96,21 +96,12 @@ const createCustomSystemPrompt = async (
 
 const seedInteractiveCustomPromptInterview = async (
   apiAdmin: ReportingApi,
+  companyId: number,
   scenario: InteractiveCustomPromptScenario,
 ): Promise<SeededCustomPromptInterview> => {
   const timestamp = Date.now();
   const seededEmail = `product-dev_qa+ai+interactive+custom-prompt+${scenario.language}+${timestamp}@givery.co.jp`;
   const promptId = await createCustomSystemPrompt(apiAdmin, timestamp);
-
-  const companyResp = await apiAdmin.createCompany({
-    company_name: `E2E Interactive Custom Prompt ${scenario.providerLabel} ${scenario.languageLabel} ${timestamp}`,
-    stt_provider: scenario.sttProvider,
-  });
-  await expect(companyResp).toBeOK();
-
-  const { company_id: companyId } = (await companyResp.json()) as {
-    company_id: number;
-  };
 
   const interview = await new InterviewBuilder(apiAdmin)
     .forCompany(companyId)
@@ -159,12 +150,14 @@ test.describe("Interview Flow - Interactive custom system prompt @interview", ()
   for (const scenario of customPromptScenarios) {
     test(`Custom system prompt should mark every deep dive in ${scenario.languageLabel}`, async ({
       freshApiAdmin: apiAdmin,
+      interviewCompanyIds,
       page,
     }, testInfo) => {
       test.setTimeout(customPromptTestTimeoutMs);
 
       const seededInterview = await seedInteractiveCustomPromptInterview(
         apiAdmin,
+        interviewCompanyIds[scenario.sttProvider],
         scenario,
       );
       const applicantName = withBrowserApplicantPrefix(

@@ -211,21 +211,12 @@ const patchQuestionPrompt = async (
 
 const seedMixedPromptInterview = async (
   apiAdmin: ReportingApi,
+  companyId: number,
   scenario: MixedCustomPromptScenario,
 ): Promise<SeededMixedPromptInterview> => {
   const timestamp = Date.now();
   const seededEmail = `product-dev_qa+ai+interactive+mixed-prompts+${scenario.language}+${timestamp}@givery.co.jp`;
   const promptIds = await createMixedPromptIds(apiAdmin, timestamp);
-
-  const companyResp = await apiAdmin.createCompany({
-    company_name: `E2E Interactive Mixed Prompts ${scenario.providerLabel} ${scenario.languageLabel} ${timestamp}`,
-    stt_provider: scenario.sttProvider,
-  });
-  await expect(companyResp).toBeOK();
-
-  const { company_id: companyId } = (await companyResp.json()) as {
-    company_id: number;
-  };
 
   const interviewBuilder = new InterviewBuilder(apiAdmin)
     .forCompany(companyId)
@@ -372,11 +363,16 @@ test.describe("Interview Flow - Interactive mixed custom prompts @interview", ()
   for (const scenario of mixedPromptScenarios) {
     test(`Flow and question prompts should both be represented in ${scenario.languageLabel}`, async ({
       freshApiAdmin: apiAdmin,
+      interviewCompanyIds,
       page,
     }, testInfo) => {
       test.setTimeout(mixedPromptTestTimeoutMs);
 
-      const seededInterview = await seedMixedPromptInterview(apiAdmin, scenario);
+      const seededInterview = await seedMixedPromptInterview(
+        apiAdmin,
+        interviewCompanyIds[scenario.sttProvider],
+        scenario,
+      );
       const applicantName = withBrowserApplicantPrefix(
         testInfo,
         `Interactive Mixed Prompt applicant - ${scenario.providerLabel} - ${scenario.languageLabel} - ${seededInterview.promptIds.flowPromptId} - ${Date.now()}`,

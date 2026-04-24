@@ -133,18 +133,13 @@ const totalLeadUpQuestions = 3;
 test.describe("Interview Flow - Interactive with Deep Dives @interview", () => {
   for (const scenario of interactiveFlowScenarios) {
     test.describe(`${scenario.languageLabel} - ${scenario.providerLabel}`, () => {
-      let seededEmail: string;
+      let interviewSessionId: number;
       let interviewUrl: string;
 
-      test.beforeEach(async ({ freshApiAdmin: apiAdmin }) => {
+      test.beforeEach(async ({ freshApiAdmin: apiAdmin, interviewCompanyIds }) => {
         const timestamp = Date.now();
-        seededEmail = `product-dev_qa+ai+interactive+${scenario.language}+${scenario.sttProvider}+${timestamp}@givery.co.jp`;
-
-        const companyResp = await apiAdmin.createCompany({
-          company_name: `E2E Interactive ${scenario.providerLabel} ${scenario.languageLabel} ${timestamp}`,
-          stt_provider: scenario.sttProvider,
-        });
-        const { company_id: companyId } = await companyResp.json();
+        const seededEmail = `product-dev_qa+ai+interactive+${scenario.language}+${scenario.sttProvider}+${timestamp}@givery.co.jp`;
+        const companyId = interviewCompanyIds[scenario.sttProvider];
 
         const interviewBuilder = new InterviewBuilder(apiAdmin)
           .forCompany(companyId)
@@ -172,6 +167,7 @@ test.describe("Interview Flow - Interactive with Deep Dives @interview", () => {
         }
 
         const interview = await interviewBuilder.build();
+        interviewSessionId = interview.interviewSessionId;
         interviewUrl = interview.interviewUrl;
       });
 
@@ -314,10 +310,10 @@ test.describe("Interview Flow - Interactive with Deep Dives @interview", () => {
         // Verify report and transcripts
         await test.step("Verify report and transcripts", async () => {
           await verifyInteractiveFlowReport({
+            interviewSessionId,
             pageAdmin,
             questionRecords,
             scenarioLabel: `${scenario.languageLabel} with ${scenario.providerLabel}`,
-            seededEmail,
           });
         });
       });

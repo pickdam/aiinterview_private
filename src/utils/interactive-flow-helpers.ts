@@ -1,9 +1,10 @@
+import { setTimeout as wait } from 'node:timers/promises'
+
 import type { Page } from '@playwright/test'
 import { LmStudioApi } from '@src/api/lm-studio-api'
 import type { InterviewLanguage } from '@src/api/types'
 import { expect } from '@src/fixtures/fixtures'
 import { refreshAdminBrowserAuth } from '@src/utils/api-auth'
-import { Home } from '@src/pages/home.page'
 import { InterviewQuestionPage } from '@src/pages/interview-question.page'
 import { ReportPage } from '@src/pages/report.page'
 import {
@@ -18,7 +19,6 @@ import {
     transcriptionErrorPattern,
 } from '@src/utils/transcription-comparison'
 import {
-    createSpeechAudioBase64,
     VirtualMicrophone,
 } from '@src/utils/virtual-microphone'
 
@@ -66,10 +66,10 @@ type HandleDeepDiveLoopOptions = {
 }
 
 type VerifyReportOptions = {
+    interviewSessionId: number
     pageAdmin: Page
     questionRecords: InteractiveFlowQuestionRecord[]
     scenarioLabel: string
-    seededEmail: string
 }
 
 export type DeepDiveLoopResult = {
@@ -91,6 +91,10 @@ type AnswerDeepDiveQuestionOptions = {
 }
 
 const questionTimeoutBufferSeconds = 45
+const answerRecorderActivationToneMs = 1500
+const answerRecorderActivationToneGain = 0.9
+const answerRecorderSettleMs = 500
+const answerRecordingFlushMs = 3000
 const timeoutToneDurationMs = 3000
 const timeoutToneIntervalMs = 1000
 const closingRemarkSignals = [
@@ -254,6 +258,39 @@ const waitForCurrentQuestionTimerToStart = async (
         .toBeLessThan(initialTimerSeconds)
 }
 
+const prepareCurrentQuestionForApplicantAnswer = async (
+    interviewQuestionPage: InterviewQuestionPage,
+    virtualMicrophone: VirtualMicrophone,
+): Promise<void> => {
+    const initialTimerSeconds = timeToSeconds(
+        await interviewQuestionPage.remainingTime.innerText(),
+    )
+    const toneStartedAt = Date.now()
+
+    await virtualMicrophone.emitTone(
+        answerRecorderActivationToneMs,
+        answerRecorderActivationToneGain,
+    )
+    await waitForCurrentQuestionTimerToStart(
+        interviewQuestionPage,
+        initialTimerSeconds,
+    )
+    await expect(interviewQuestionPage.submitAnswerBtn).toBeEnabled({
+        timeout: 30000,
+    })
+
+    const remainingToneMs = Math.max(
+        answerRecorderActivationToneMs - (Date.now() - toneStartedAt),
+        0,
+    )
+
+    await wait(remainingToneMs + answerRecorderSettleMs)
+}
+
+const waitForApplicantAnswerToFlush = async (): Promise<void> => {
+    await wait(answerRecordingFlushMs)
+}
+
 const resolveDeepDiveAdvanceMethod = (
     advanceMethod:
         | InteractiveFlowAdvanceMethod
@@ -302,9 +339,6 @@ const answerDeepDiveQuestion = async ({
         },
     )
 
-    const initialTimerSeconds = timeToSeconds(
-        await interviewQuestionPage.remainingTime.innerText(),
-    )
     const answer = await answerPromise
 
     questionRecords.push({
@@ -313,14 +347,17 @@ const answerDeepDiveQuestion = async ({
         isDeepDive: true,
     })
 
-    await virtualMicrophone.speak(answer)
-    await waitForCurrentQuestionTimerToStart(
+    const answerAudioBase64 =
+        await virtualMicrophone.createSpeechAudioBase64(answer)
+
+    await prepareCurrentQuestionForApplicantAnswer(
         interviewQuestionPage,
-        initialTimerSeconds,
+        virtualMicrophone,
     )
-    await expect(interviewQuestionPage.submitAnswerBtn).toBeEnabled({
-        timeout: 30000,
+    await virtualMicrophone.playAudioBase64(answerAudioBase64, {
+        startDelayMs: 0,
     })
+    await waitForApplicantAnswerToFlush()
 
     await advanceCurrentQuestion({
         advanceMethod: deepDiveAdvanceMethod,
@@ -435,21 +472,17 @@ export const answerLeadUpQuestion = async ({
 
     await expect(interviewQuestionPage.remainingTime).toHaveText(formatTimer(60))
 
-    const answerAudioBase64 = createSpeechAudioBase64(questionData.answer, {
-        voice: virtualMicrophone['options'].voice,
-    })
-    await virtualMicrophone.playAudioBase64(answerAudioBase64)
+    const answerAudioBase64 =
+        await virtualMicrophone.createSpeechAudioBase64(questionData.answer)
 
-    const initialTimerSeconds = timeToSeconds(
-        await interviewQuestionPage.remainingTime.innerText(),
-    )
-    await waitForCurrentQuestionTimerToStart(
+    await prepareCurrentQuestionForApplicantAnswer(
         interviewQuestionPage,
-        initialTimerSeconds,
+        virtualMicrophone,
     )
-    await expect(interviewQuestionPage.submitAnswerBtn).toBeEnabled({
-        timeout: 15000,
+    await virtualMicrophone.playAudioBase64(answerAudioBase64, {
+        startDelayMs: 0,
     })
+    await waitForApplicantAnswerToFlush()
 }
 
 export const handleDeepDiveLoop = async ({
@@ -537,25 +570,16 @@ export const handleDeepDiveLoop = async ({
 }
 
 export const verifyInteractiveFlowReport = async ({
+    interviewSessionId,
     pageAdmin,
     questionRecords,
     scenarioLabel,
-    seededEmail,
 }: VerifyReportOptions): Promise<void> => {
-    const dashboard = new Home(pageAdmin)
-
     await refreshAdminBrowserAuth(pageAdmin)
-    await dashboard.goto()
-    await dashboard.searchCandidateByEmail(seededEmail)
-    await expect(dashboard.openReportLink).toBeVisible({
-        timeout: 120000,
-    })
-
-    const [reportTab] = await Promise.all([
-        pageAdmin.waitForEvent('popup'),
-        dashboard.openReport(),
-    ])
+    const reportTab = await pageAdmin.context().newPage()
     const reportPage = new ReportPage(reportTab)
+
+    await reportPage.goto(interviewSessionId)
 
     await reportTab.waitForLoadState('domcontentloaded')
     await reportTab.bringToFront()

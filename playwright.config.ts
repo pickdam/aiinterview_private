@@ -1,4 +1,5 @@
 // import { resolve } from "path"
+import { Buffer } from "node:buffer";
 import process from "process";
 
 import { defineConfig, devices } from "@playwright/test";
@@ -21,6 +22,31 @@ const firefoxMediaLaunchOptions = {
   },
 };
 
+const getHttpCredentials = ():
+  | { username: string; password: string }
+  | undefined => {
+  const basicAuth = process.env.REPORTING_API_BASIC_AUTH?.trim();
+
+  if (!basicAuth?.startsWith("Basic ")) {
+    return undefined;
+  }
+
+  const decodedCredentials = Buffer.from(
+    basicAuth.slice("Basic ".length),
+    "base64",
+  ).toString("utf-8");
+  const separatorIndex = decodedCredentials.indexOf(":");
+
+  if (separatorIndex === -1) {
+    return undefined;
+  }
+
+  return {
+    password: decodedCredentials.slice(separatorIndex + 1),
+    username: decodedCredentials.slice(0, separatorIndex),
+  };
+};
+
 /**
  * See https://playwright.dev/docs/test-configuration.
  */
@@ -41,10 +67,7 @@ export default defineConfig({
   ],
   use: {
     baseURL: process.env.BASE_URL,
-    httpCredentials: {
-      username: "track",
-      password: "future2025",
-    },
+    httpCredentials: getHttpCredentials(),
     permissions: ["camera", "microphone"],
     headless: process.env.HEADLESS === "true",
     launchOptions: chromiumMediaLaunchOptions,

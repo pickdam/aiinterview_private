@@ -73,16 +73,11 @@ const visibleInterviewErrorPattern =
 
 const seedSampleRateInterview = async (
   apiAdmin: ReportingApi,
+  companyId: number,
   sampleRateHz: number,
 ): Promise<string> => {
   const timestamp = Date.now();
   const seededEmail = `product-dev_qa+ai+sample-rate+${sampleRateHz}+${timestamp}@givery.co.jp`;
-
-  const companyResp = await apiAdmin.createCompany({
-    company_name: `E2E Sample Rate ${sampleRateFlowConfig.providerLabel} ${sampleRateFlowConfig.languageLabel} ${sampleRateHz} ${timestamp}`,
-    stt_provider: sampleRateFlowConfig.sttProvider,
-  });
-  const { company_id: companyId } = await companyResp.json();
 
   const interviewBuilder = new InterviewBuilder(apiAdmin)
     .forCompany(companyId)
@@ -264,15 +259,32 @@ const expectInterviewToFinish = async (page: Page): Promise<void> => {
 };
 
 test.describe("Interview Flow - Applicant audio sample rates @interview", () => {
+  test("The default virtual microphone should use the browser audio node rate", async ({
+    page,
+  }) => {
+    const virtualMicrophone = new VirtualMicrophone(page);
+
+    await virtualMicrophone.install();
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+
+    await expect
+      .poll(() => virtualMicrophone.getAudioContextSampleRate(), {
+        timeout: 10000,
+      })
+      .not.toBe(16000);
+  });
+
   for (const sampleRateHz of sampleRatesHz) {
     test(`The non-interactive flow should finish with ${sampleRateHz} Hz applicant audio`, async ({
       freshApiAdmin: apiAdmin,
+      interviewCompanyIds,
       page,
     }, testInfo) => {
       test.setTimeout(sampleRateTestTimeoutMs);
 
       const interviewUrl = await seedSampleRateInterview(
         apiAdmin,
+        interviewCompanyIds[sampleRateFlowConfig.sttProvider],
         sampleRateHz,
       );
       const questionCases = sampleRateFlowConfig.questions.map(

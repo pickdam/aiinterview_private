@@ -48,15 +48,10 @@ const interactiveMinMaxTestTimeoutMs = 600000;
 
 const seedInteractiveMinMaxInterview = async (
   apiAdmin: ReportingApi,
+  companyId: number,
 ): Promise<string> => {
   const timestamp = Date.now();
   const seededEmail = `product-dev_qa+ai+interactive+minmax+${timestamp}@givery.co.jp`;
-
-  const companyResp = await apiAdmin.createCompany({
-    company_name: `E2E Interactive Min Max ${interactiveMinMaxFlowConfig.providerLabel} ${interactiveMinMaxFlowConfig.languageLabel} ${timestamp}`,
-    stt_provider: interactiveMinMaxFlowConfig.sttProvider,
-  });
-  const { company_id: companyId } = await companyResp.json();
 
   const interview = await new InterviewBuilder(apiAdmin)
     .forCompany(companyId)
@@ -88,11 +83,15 @@ const seedInteractiveMinMaxInterview = async (
 test.describe("Interview Flow - Interactive deep dive min/max @interview", () => {
   test("Japanese interactive flow should generate exactly three deep dives for a 3-3 configuration", async ({
     freshApiAdmin: apiAdmin,
+    interviewCompanyIds,
     page,
   }, testInfo) => {
     test.setTimeout(interactiveMinMaxTestTimeoutMs);
 
-    const interviewUrl = await seedInteractiveMinMaxInterview(apiAdmin);
+    const interviewUrl = await seedInteractiveMinMaxInterview(
+      apiAdmin,
+      interviewCompanyIds[interactiveMinMaxFlowConfig.sttProvider],
+    );
     const applicantName = withBrowserApplicantPrefix(
       testInfo,
       `Interactive Min Max applicant - ${interactiveMinMaxFlowConfig.providerLabel} - ${interactiveMinMaxFlowConfig.languageLabel} - ${Date.now()}`,

@@ -171,15 +171,10 @@ const expectInterviewToFinish = async (page: Page): Promise<void> => {
 test.describe("Interview Flow - Timer related cases @interview", () => {
   let interviewUrl: string;
 
-  test.beforeEach(async ({ freshApiAdmin: apiAdmin }) => {
+  test.beforeEach(async ({ freshApiAdmin: apiAdmin, interviewCompanyIds }) => {
     const timestamp = Date.now();
     const seededEmail = `product-dev_qa+ai+timer+${timestamp}@givery.co.jp`;
-
-    const companyResp = await apiAdmin.createCompany({
-      company_name: `E2E Timer ${timerFlowConfig.providerLabel} ${timerFlowConfig.languageLabel} ${timestamp}`,
-      stt_provider: timerFlowConfig.sttProvider,
-    });
-    const { company_id: companyId } = await companyResp.json();
+    const companyId = interviewCompanyIds[timerFlowConfig.sttProvider];
 
     const interviewBuilder = new InterviewBuilder(apiAdmin)
       .forCompany(companyId)
