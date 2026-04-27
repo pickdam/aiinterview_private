@@ -73,6 +73,7 @@ type VerifyReportOptions = {
 }
 
 export type DeepDiveLoopResult = {
+    closingRemarkText: string | null
     deepDiveCount: number
     sawClosingRemark: boolean
 }
@@ -92,14 +93,17 @@ type AnswerDeepDiveQuestionOptions = {
 
 const questionTimeoutBufferSeconds = 45
 const answerRecorderActivationToneMs = 1500
-const answerRecorderActivationToneGain = 0.9
 const answerRecorderSettleMs = 500
 const answerRecordingFlushMs = 3000
-const timeoutToneDurationMs = 3000
-const timeoutToneIntervalMs = 1000
+const timeoutSilencePulseDurationMs = 3000
+const timeoutSilencePulseIntervalMs = 1000
 const closingRemarkSignals = [
     '次に進みます',
     "We'll move to the next question.",
+    "Let's move on to the next question.",
+    'Lets move on to the next question.',
+    "Let's move on.",
+    'Lets move on.',
 ]
 const languageNameByCode = {
     en: 'English',
@@ -112,6 +116,13 @@ const isAnsweredQuestionRecord = (
 
 const normalizeVisibleText = (text: string): string =>
     text.replace(/\s+/g, ' ').trim()
+
+const normalizeClosingRemarkText = (text: string): string =>
+    normalizeVisibleText(text)
+        .toLowerCase()
+        .replace(/[’']/g, '')
+        .replace(/[.!?,]/g, '')
+        .trim()
 
 const normalizeCandidateAnswer = (text: string): string =>
     text
@@ -137,14 +148,14 @@ const isClosingRemarkText = (
     questionText: string,
     scenarioClosingRemark: string,
 ): boolean => {
-    const normalizedQuestionText = normalizeVisibleText(questionText)
+    const normalizedQuestionText = normalizeClosingRemarkText(questionText)
     const possibleClosingRemarks = [
         scenarioClosingRemark,
         ...closingRemarkSignals,
     ]
 
     return possibleClosingRemarks.some((closingRemark) =>
-        normalizedQuestionText.includes(normalizeVisibleText(closingRemark)),
+        normalizedQuestionText.includes(normalizeClosingRemarkText(closingRemark)),
     )
 }
 
@@ -334,7 +345,9 @@ const waitForCurrentQuestionTimerToExpire = async (
     await expect
         .poll(
             async () => {
-                await virtualMicrophone.emitTone(timeoutToneDurationMs)
+                await virtualMicrophone.emitSilence(
+                    timeoutSilencePulseDurationMs,
+                )
 
                 if (await isInterviewCompleteVisible(interviewQuestionPage.page)) {
                     return true
@@ -359,7 +372,7 @@ const waitForCurrentQuestionTimerToExpire = async (
                 return currentTimerSeconds <= 1
             },
             {
-                intervals: [timeoutToneIntervalMs],
+                intervals: [timeoutSilencePulseIntervalMs],
                 timeout: timeoutMs,
             },
         )
@@ -391,10 +404,7 @@ const prepareCurrentQuestionForApplicantAnswer = async (
     )
     const toneStartedAt = Date.now()
 
-    await virtualMicrophone.emitTone(
-        answerRecorderActivationToneMs,
-        answerRecorderActivationToneGain,
-    )
+    await virtualMicrophone.emitSilence(answerRecorderActivationToneMs)
     await waitForCurrentQuestionTimerToStart(
         interviewQuestionPage,
         initialTimerSeconds,
@@ -622,6 +632,7 @@ export const handleDeepDiveLoop = async ({
     virtualMicrophone,
     ...deepDiveOptions
 }: HandleDeepDiveLoopOptions): Promise<DeepDiveLoopResult> => {
+    let closingRemarkText: string | null = null
     const interviewQuestionPage = new InterviewQuestionPage(page)
     let deepDiveCount = 0
     let sawClosingRemark = false
@@ -658,6 +669,7 @@ export const handleDeepDiveLoop = async ({
         }
 
         if (isClosingRemarkText(questionText, closingRemark)) {
+            closingRemarkText = questionText
             sawClosingRemark = true
             await waitForInterviewerAudioToFinishOrCompletion(flow, page)
             expect(deepDiveCount).toBeGreaterThanOrEqual(1)
@@ -693,7 +705,7 @@ export const handleDeepDiveLoop = async ({
         virtualMicrophone,
     })
 
-    return { deepDiveCount, sawClosingRemark }
+    return { closingRemarkText, deepDiveCount, sawClosingRemark }
 }
 
 export const verifyInteractiveFlowReport = async ({

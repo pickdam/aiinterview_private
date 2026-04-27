@@ -52,6 +52,7 @@ type VirtualMicrophoneWindow = Window & {
     durationMs: number,
     gainValue?: number,
   ) => Promise<number>;
+  __emitApplicantMicSilence?: (durationMs: number) => Promise<number>;
   __aiInterviewPatchedMediaRecorder?: typeof MediaRecorder;
   __getApplicantMicSampleRate?: () => number;
   __playApplicantAnswerAudio?: (
@@ -621,6 +622,30 @@ export class VirtualMicrophone {
         return durationMs / 1000;
       };
 
+      win.__emitApplicantMicSilence = async (durationMs: number) => {
+        const { audioContext, destination } = ensureVirtualMicrophone();
+        const silenceBuffer = audioContext.createBuffer(
+          1,
+          Math.max(1, Math.ceil((audioContext.sampleRate * durationMs) / 1000)),
+          audioContext.sampleRate,
+        );
+        const source = audioContext.createBufferSource();
+        const gain = audioContext.createGain();
+
+        if (audioContext.state !== "running") {
+          await audioContext.resume();
+        }
+
+        source.buffer = silenceBuffer;
+        gain.gain.value = 1;
+        source.connect(gain);
+        gain.connect(destination);
+        source.start();
+        source.stop(audioContext.currentTime + durationMs / 1000);
+
+        return durationMs / 1000;
+      };
+
       win.__playApplicantAnswerAudio = async (
         audioBase64: string,
         playbackOptions = {},
@@ -829,6 +854,19 @@ export class VirtualMicrophone {
       },
       { toneDurationMs: durationMs, toneGainValue: gainValue },
     );
+  }
+
+  async emitSilence(durationMs: number): Promise<number> {
+    return this.page.evaluate(async ({ silenceDurationMs }) => {
+      const emitSilence = (window as VirtualMicrophoneWindow)
+        .__emitApplicantMicSilence;
+
+      if (!emitSilence) {
+        throw new Error("Virtual microphone silence helper was not installed");
+      }
+
+      return emitSilence(silenceDurationMs);
+    }, { silenceDurationMs: durationMs });
   }
 
   async playAudioBase64(

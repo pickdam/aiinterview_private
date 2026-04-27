@@ -7,6 +7,7 @@ import { withBrowserApplicantPrefix } from "@src/utils/browser-project";
 import {
   answerLeadUpQuestion,
   handleDeepDiveLoop,
+  type DeepDiveLoopResult,
   type InteractiveFlowQuestionRecord,
   verifyInteractiveFlowReport,
 } from "@src/utils/interactive-flow-helpers";
@@ -107,7 +108,7 @@ const interactiveFlowScenarios: InteractiveFlowConfig[] = [
     sttProvider: "openai",
     questionBank: questionBankByLanguage.en,
     voice: "Samantha",
-    closingRemark: "We'll move to the next question.",
+    closingRemark: "Let's move on",
   },
   {
     language: "en",
@@ -116,7 +117,7 @@ const interactiveFlowScenarios: InteractiveFlowConfig[] = [
     sttProvider: "elevenlabs",
     questionBank: questionBankByLanguage.en,
     voice: "Samantha",
-    closingRemark: "We'll move to the next question.",
+    closingRemark: "Let's move on",
   },
 ];
 
@@ -125,6 +126,80 @@ const interactiveFlowScenarios: InteractiveFlowConfig[] = [
 // ============================================================
 
 const totalLeadUpQuestions = 3;
+const japaneseCharacterPattern = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/gu;
+const latinLetterPattern = /[A-Za-z]/g;
+const englishTopicCloserPhrases = [
+  "lets move on to the next question",
+  "lets move on",
+];
+
+const countPatternMatches = (text: string, pattern: RegExp): number =>
+  (text.match(pattern) ?? []).length;
+
+const normalizeTopicCloserText = (text: string): string =>
+  text
+    .toLowerCase()
+    .replace(/[’']/g, "")
+    .replace(/[^a-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const expectTextToMatchLanguage = (
+  text: string,
+  language: InterviewLanguage,
+  label: string,
+): void => {
+  const japaneseCharacters = countPatternMatches(text, japaneseCharacterPattern);
+  const latinLetters = countPatternMatches(text, latinLetterPattern);
+  const latinShare =
+    latinLetters / Math.max(japaneseCharacters + latinLetters, 1);
+
+  if (language === "en") {
+    expect(
+      japaneseCharacters,
+      `${label} should not contain Japanese characters`,
+    ).toBe(0);
+    expect(latinLetters, `${label} should contain English letters`).toBeGreaterThan(
+      0,
+    );
+    return;
+  }
+
+  expect(
+    japaneseCharacters,
+    `${label} should contain Japanese characters`,
+  ).toBeGreaterThan(0);
+  expect(
+    latinShare,
+    `${label} should stay predominantly in Japanese`,
+  ).toBeLessThan(0.2);
+};
+
+const expectTopicCloserToMatchLanguage = (
+  text: string,
+  language: InterviewLanguage,
+): void => {
+  const normalizedCloser = normalizeTopicCloserText(text);
+
+  if (language === "en") {
+    expectTextToMatchLanguage(text, language, `Topic closer "${text}"`);
+    expect(
+      englishTopicCloserPhrases.includes(normalizedCloser),
+      `English topic closer "${text}" should include one of: ${englishTopicCloserPhrases.join(
+        ", ",
+      )}`,
+    ).toBe(true);
+    return;
+  }
+
+  expectTextToMatchLanguage(text, language, `Topic closer "${text}"`);
+  expect(
+    englishTopicCloserPhrases.some((phrase) =>
+      normalizedCloser.includes(phrase),
+    ),
+    `Japanese topic closer "${text}" should not include English closer phrases`,
+  ).toBe(false);
+};
 
 // ============================================================
 // Tests
@@ -184,6 +259,7 @@ test.describe("Interview Flow - Interactive with Deep Dives @interview", () => {
 
         const questions = Object.values(scenario.questionBank);
         const questionRecords: InteractiveFlowQuestionRecord[] = [];
+        const deepDiveLoopResults: DeepDiveLoopResult[] = [];
 
         const virtualMicrophone = new VirtualMicrophone(page, {
           speechStartDelayMs: 1500,
@@ -219,7 +295,7 @@ test.describe("Interview Flow - Interactive with Deep Dives @interview", () => {
           isDeepDive: false,
         });
         await test.step("Deep dive loop for lead-up question 1", async () => {
-          await handleDeepDiveLoop({
+          deepDiveLoopResults.push(await handleDeepDiveLoop({
             closingRemark: scenario.closingRemark,
             deepDiveAdvanceMethod: "submit",
             flow,
@@ -231,7 +307,7 @@ test.describe("Interview Flow - Interactive with Deep Dives @interview", () => {
             questionRecords,
             totalLeadUpQuestions,
             virtualMicrophone,
-          });
+          }));
         });
 
         // Question 2: timeout lead-up, submit deep-dive
@@ -252,7 +328,7 @@ test.describe("Interview Flow - Interactive with Deep Dives @interview", () => {
           isDeepDive: false,
         });
         await test.step("Deep dive loop for lead-up question 2", async () => {
-          await handleDeepDiveLoop({
+          deepDiveLoopResults.push(await handleDeepDiveLoop({
             closingRemark: scenario.closingRemark,
             deepDiveAdvanceMethod: "submit",
             flow,
@@ -264,7 +340,7 @@ test.describe("Interview Flow - Interactive with Deep Dives @interview", () => {
             questionRecords,
             totalLeadUpQuestions,
             virtualMicrophone,
-          });
+          }));
         });
 
         // Question 3: submit lead-up, timeout deep-dive
@@ -285,7 +361,7 @@ test.describe("Interview Flow - Interactive with Deep Dives @interview", () => {
           isDeepDive: false,
         });
         await test.step("Deep dive loop for lead-up question 3", async () => {
-          await handleDeepDiveLoop({
+          deepDiveLoopResults.push(await handleDeepDiveLoop({
             closingRemark: scenario.closingRemark,
             deepDiveAdvanceMethod: "timeout",
             flow,
@@ -297,7 +373,38 @@ test.describe("Interview Flow - Interactive with Deep Dives @interview", () => {
             questionRecords,
             totalLeadUpQuestions,
             virtualMicrophone,
-          });
+          }));
+        });
+
+        await test.step("Verify deep dive and topic closer language", async () => {
+          const deepDiveQuestions = questionRecords
+            .filter((record) => record.isDeepDive)
+            .map((record) => record.question);
+          const closerTexts = deepDiveLoopResults
+            .map((result) => result.closingRemarkText)
+            .filter((text): text is string => Boolean(text));
+
+          expect(deepDiveQuestions.length).toBeGreaterThan(0);
+
+          for (const deepDiveQuestion of deepDiveQuestions) {
+            expectTextToMatchLanguage(
+              deepDiveQuestion,
+              scenario.language,
+              `Deep dive question "${deepDiveQuestion}"`,
+            );
+          }
+
+          expect(
+            deepDiveLoopResults.slice(0, -1).every((result) => result.sawClosingRemark),
+            "Every non-final topic should end with a closer",
+          ).toBe(true);
+          expect(closerTexts.length).toBeGreaterThanOrEqual(
+            totalLeadUpQuestions - 1,
+          );
+
+          for (const closerText of closerTexts) {
+            expectTopicCloserToMatchLanguage(closerText, scenario.language);
+          }
         });
 
         // Verify interview complete
