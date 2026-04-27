@@ -52,6 +52,7 @@ type VirtualMicrophoneWindow = Window & {
     durationMs: number,
     gainValue?: number,
   ) => Promise<number>;
+  __aiInterviewPatchedMediaRecorder?: typeof MediaRecorder;
   __getApplicantMicSampleRate?: () => number;
   __playApplicantAnswerAudio?: (
     audioBase64: string,
@@ -358,6 +359,73 @@ export class VirtualMicrophone {
           )
         );
       };
+      const isMacOsSafari = () => {
+        return (
+          shouldUseSyntheticVideo() &&
+          /Mac/i.test(navigator.platform || navigator.userAgent)
+        );
+      };
+      const installSafariMediaRecorderMimeTypeShim = () => {
+        if (
+          !isMacOsSafari() ||
+          typeof MediaRecorder === "undefined" ||
+          win.__aiInterviewPatchedMediaRecorder
+        ) {
+          return;
+        }
+
+        const OriginalMediaRecorder = MediaRecorder;
+        const preferredVideoMimeTypes = [
+          'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+          "video/mp4;codecs=h264,aac",
+          "video/mp4",
+        ];
+        const forcedVideoMimeType =
+          preferredVideoMimeTypes.find((mimeType) => {
+            try {
+              return OriginalMediaRecorder.isTypeSupported(mimeType);
+            } catch {
+              return false;
+            }
+          }) ?? "video/mp4";
+
+        class PatchedMediaRecorder extends OriginalMediaRecorder {
+          private readonly __aiInterviewForcedMimeType?: string;
+
+          constructor(stream: MediaStream, recorderOptions: MediaRecorderOptions = {}) {
+            const hasVideoTrack = stream.getVideoTracks().length > 0;
+            const nextOptions =
+              hasVideoTrack && !recorderOptions.mimeType
+                ? { ...recorderOptions, mimeType: forcedVideoMimeType }
+                : recorderOptions;
+
+            super(stream, nextOptions);
+            this.__aiInterviewForcedMimeType =
+              hasVideoTrack && !recorderOptions.mimeType
+                ? forcedVideoMimeType
+                : undefined;
+          }
+
+          get mimeType(): string {
+            return super.mimeType || this.__aiInterviewForcedMimeType || "";
+          }
+
+          static isTypeSupported(mimeType: string): boolean {
+            if (/^video\/mp4\b/i.test(mimeType)) {
+              return true;
+            }
+
+            return OriginalMediaRecorder.isTypeSupported(mimeType);
+          }
+        }
+
+        Object.defineProperty(window, "MediaRecorder", {
+          configurable: true,
+          value: PatchedMediaRecorder,
+        });
+
+        win.__aiInterviewPatchedMediaRecorder = PatchedMediaRecorder;
+      };
 
       const mediaPermissionNames = new Set(["camera", "microphone"]);
       const createGrantedPermissionStatus = (name: string) => {
@@ -522,6 +590,7 @@ export class VirtualMicrophone {
 
       win.__activeAudioPlayCount = 0;
       win.__audioPlayCallCount = 0;
+      installSafariMediaRecorderMimeTypeShim();
       document.addEventListener("click", resumeVirtualMicrophone, true);
       document.addEventListener("keydown", resumeVirtualMicrophone, true);
       document.addEventListener("pointerdown", resumeVirtualMicrophone, true);

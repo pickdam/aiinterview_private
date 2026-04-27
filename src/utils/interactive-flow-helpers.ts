@@ -106,8 +106,19 @@ const languageNameByCode = {
     ja: 'Japanese',
 } satisfies Record<InterviewLanguage, string>
 
+const isAnsweredQuestionRecord = (
+    record: InteractiveFlowQuestionRecord,
+): record is AnsweredQuestionRecord => record.answer !== null
+
 const normalizeVisibleText = (text: string): string =>
     text.replace(/\s+/g, ' ').trim()
+
+const normalizeCandidateAnswer = (text: string): string =>
+    text
+        .replace(/^(Candidate|Candidate answer|Interviewee|受験者|候補者)\s*[:：]\s*/i, '')
+        .replace(/^[“"'「」]+|[“"'「」]+$/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
 
 const getQuestionText = async (
     interviewQuestionPage: InterviewQuestionPage,
@@ -137,40 +148,153 @@ const isClosingRemarkText = (
     )
 }
 
-const getLatestLeadUpAnswer = (
+const formatAnsweredQuestionHistory = (
+    questionRecords: AnsweredQuestionRecord[],
+): string =>
+    questionRecords
+        .map((record, index) =>
+            [
+                `${index + 1}. ${record.isDeepDive ? 'Deep dive' : 'Lead-up'} question: ${record.question}`,
+                `Candidate answer: ${record.answer}`,
+            ].join('\n'),
+        )
+        .join('\n\n')
+
+const getCurrentTopicHistory = (
     questionRecords: InteractiveFlowQuestionRecord[],
-): AnsweredQuestionRecord | undefined => {
-    return questionRecords.findLast(
-        (record): record is AnsweredQuestionRecord =>
-            !record.isDeepDive && record.answer !== null,
+): AnsweredQuestionRecord[] => {
+    const answeredRecords = questionRecords.filter(isAnsweredQuestionRecord)
+    const lastLeadUpIndex = answeredRecords.findLastIndex(
+        (record) => !record.isDeepDive,
+    )
+
+    return lastLeadUpIndex === -1
+        ? answeredRecords
+        : answeredRecords.slice(lastLeadUpIndex)
+}
+
+const needsCandidateAnswerRewrite = (answer: string): boolean => {
+    const normalizedAnswer = normalizeVisibleText(answer)
+
+    return (
+        /[?？]/.test(normalizedAnswer) ||
+        /^(can|could|would|will|what|how|why|when|where)\b/i.test(
+            normalizedAnswer,
+        ) ||
+        /(教えていただけますか|いただけますか|でしょうか|ですか)[。.]?$/i.test(
+            normalizedAnswer,
+        )
     )
 }
 
 const buildDeepDiveAnswerPrompt = ({
+    questionRecords,
     interviewLanguage,
-    previousLeadUpAnswer,
     questionText,
 }: {
+    questionRecords: InteractiveFlowQuestionRecord[]
     interviewLanguage: InterviewLanguage
-    previousLeadUpAnswer: AnsweredQuestionRecord | undefined
     questionText: string
 }): string => {
     const languageName = languageNameByCode[interviewLanguage]
-    const previousContext = previousLeadUpAnswer
-        ? [
-              `Previous lead-up question: ${previousLeadUpAnswer.question}`,
-              `Previous candidate answer: ${previousLeadUpAnswer.answer}`,
-          ].join('\n')
-        : 'No previous answer context is available.'
+    const answeredRecords = questionRecords
+        .filter(isAnsweredQuestionRecord)
+        .slice(-6)
+    const currentTopicHistory = getCurrentTopicHistory(questionRecords)
+    const previousInterviewContext =
+        answeredRecords.length > 0
+            ? formatAnsweredQuestionHistory(answeredRecords)
+            : 'No previous interview context is available.'
+    const currentTopicContext =
+        currentTopicHistory.length > 0
+            ? formatAnsweredQuestionHistory(currentTopicHistory)
+            : 'No current topic context is available.'
 
     return [
-        'You are answering an interactive job interview as the candidate.',
-        `The interview language is ${languageName}. Always answer in ${languageName}, even if the follow-up question is written in another language.`,
-        'Use the previous candidate answer as context. Do not say that you have not answered yet if the previous answer already contains the relevant information.',
-        previousContext,
+        'You are simulating a candidate taking a live job interview.',
+        `The interview language is ${languageName}. Always answer only in ${languageName}, even if the interviewer question is written in another language.`,
+        'Stay in role as the candidate at all times.',
+        'Do not ask the interviewer any questions.',
+        'Do not request clarification, do not offer to answer more, and do not switch roles.',
+        'Do not use bullet points, labels, quotation marks, or stage directions.',
+        'Keep the answer short, professional, and natural: 2 to 4 sentences.',
+        'Be consistent with the facts already stated earlier in the interview. If the topic was already answered, expand on the same story instead of inventing a new one.',
+        `Previous interview context:\n${previousInterviewContext}`,
+        `Current topic context:\n${currentTopicContext}`,
         `Current follow-up question: ${questionText}`,
-        `Answer naturally in ${languageName}. Keep the answer concise, direct, and consistent with the previous answer.`,
+        'Answer directly as the candidate.',
     ].join('\n\n')
+}
+
+const buildCandidateAnswerRewritePrompt = ({
+    questionRecords,
+    draftAnswer,
+    interviewLanguage,
+    questionText,
+}: {
+    questionRecords: InteractiveFlowQuestionRecord[]
+    draftAnswer: string
+    interviewLanguage: InterviewLanguage
+    questionText: string
+}): string => {
+    const languageName = languageNameByCode[interviewLanguage]
+    const answeredRecords = questionRecords
+        .filter(isAnsweredQuestionRecord)
+        .slice(-6)
+    const context =
+        answeredRecords.length > 0
+            ? formatAnsweredQuestionHistory(answeredRecords)
+            : 'No previous interview context is available.'
+
+    return [
+        `Rewrite the draft into a final ${languageName} interview answer.`,
+        'The speaker is the candidate, not the interviewer.',
+        'Remove any follow-up questions, requests for clarification, or interviewer-style phrasing.',
+        'Keep the meaning, keep it short and professional, and stay consistent with the existing interview context.',
+        'Return only the rewritten candidate answer.',
+        `Previous interview context:\n${context}`,
+        `Current interviewer question: ${questionText}`,
+        `Draft answer: ${draftAnswer}`,
+    ].join('\n\n')
+}
+
+const rewriteCandidateAnswerIfNeeded = async ({
+    answer,
+    interviewLanguage,
+    lmStudio,
+    questionRecords,
+    questionText,
+}: {
+    answer: string
+    interviewLanguage: InterviewLanguage
+    lmStudio: LmStudioApi
+    questionRecords: InteractiveFlowQuestionRecord[]
+    questionText: string
+}): Promise<string> => {
+    const normalizedAnswer = normalizeCandidateAnswer(answer)
+
+    if (!needsCandidateAnswerRewrite(normalizedAnswer)) {
+        return normalizedAnswer
+    }
+
+    const rewrittenAnswer = normalizeCandidateAnswer(
+        await lmStudio.ask(
+            buildCandidateAnswerRewritePrompt({
+                questionRecords,
+                draftAnswer: normalizedAnswer,
+                interviewLanguage,
+                questionText,
+            }),
+            {
+                maxTokens: 120,
+                systemPrompt:
+                    'You rewrite job interview candidate answers. Return only the final candidate answer.',
+                temperature: 0.1,
+            },
+        ),
+    )
+
+    return rewrittenAnswer || normalizedAnswer
 }
 
 const waitForQuestionTextToChange = async (
@@ -328,18 +452,25 @@ const answerDeepDiveQuestion = async ({
 
     const answerPromise = lmStudio.ask(
         buildDeepDiveAnswerPrompt({
+            questionRecords,
             interviewLanguage,
-            previousLeadUpAnswer: getLatestLeadUpAnswer(questionRecords),
             questionText,
         }),
         {
-            maxTokens: 150,
+            maxTokens: 120,
             systemPrompt:
-                "You are the interview candidate. Answer only with the candidate's spoken response.",
+                "You are the interview candidate. Answer only with the candidate's spoken response. Never ask a question back.",
+            temperature: 0.2,
         },
     )
 
-    const answer = await answerPromise
+    const answer = await rewriteCandidateAnswerIfNeeded({
+        answer: await answerPromise,
+        interviewLanguage,
+        lmStudio,
+        questionRecords,
+        questionText,
+    })
 
     questionRecords.push({
         question: questionText,
@@ -431,10 +562,6 @@ const waitForNextLeadUpOrCompletion = async ({
         page.getByText(/The interview is now complete|面接が完了しました/i),
     ).toBeVisible({ timeout: 30000 })
 }
-
-const isAnsweredQuestionRecord = (
-    record: InteractiveFlowQuestionRecord,
-): record is AnsweredQuestionRecord => record.answer !== null
 
 const questionTypeLabel = (isDeepDive: boolean): string =>
     isDeepDive ? 'Deep dive' : 'Lead-up'
