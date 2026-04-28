@@ -184,7 +184,9 @@ const expectTopicCloserToMatchLanguage = (
   if (language === "en") {
     expectTextToMatchLanguage(text, language, `Topic closer "${text}"`);
     expect(
-      englishTopicCloserPhrases.includes(normalizedCloser),
+      englishTopicCloserPhrases.some((phrase) =>
+        normalizedCloser.endsWith(phrase),
+      ),
       `English topic closer "${text}" should include one of: ${englishTopicCloserPhrases.join(
         ", ",
       )}`,

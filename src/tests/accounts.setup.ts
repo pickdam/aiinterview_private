@@ -7,6 +7,9 @@ import { getAccounts } from "@src/utils/accounts";
 import { AuthPage } from "@src/pages/auth.page";
 import { Home } from "@src/pages/home.page";
 import { loginToReportingApi } from "@src/utils/api-auth";
+import { UserRoles } from "@src/enums/user-roles";
+import { ReportingApi } from "@src/api/reporting-api";
+import { ensureSharedInterviewCompanyIds } from "@src/utils/shared-interview-companies";
 
 // TODO dynamically only log into accounts that are required for the set of test cases being run.
 getAccounts().forEach((user) => {
@@ -33,6 +36,11 @@ getAccounts().forEach((user) => {
       baseURL: process.env.REPORTING_API_BASE_URL,
     });
     const authToken = await loginToReportingApi(apiCtx, user);
+
+    if (user.role === UserRoles.Admin) {
+      await ensureSharedInterviewCompanyIds(new ReportingApi(apiCtx, authToken));
+    }
+
     await apiCtx.dispose();
 
     // Augment the auth file with id_token

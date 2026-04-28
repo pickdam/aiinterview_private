@@ -92,11 +92,7 @@ type AnswerDeepDiveQuestionOptions = {
 }
 
 const questionTimeoutBufferSeconds = 45
-const answerRecorderActivationToneMs = 1500
-const answerRecorderSettleMs = 500
 const answerRecordingFlushMs = 3000
-const timeoutSilencePulseDurationMs = 3000
-const timeoutSilencePulseIntervalMs = 1000
 const closingRemarkSignals = [
     '次に進みます',
     "We'll move to the next question.",
@@ -332,7 +328,6 @@ const waitForQuestionTextToChange = async (
 
 const waitForCurrentQuestionTimerToExpire = async (
     interviewQuestionPage: InterviewQuestionPage,
-    virtualMicrophone: VirtualMicrophone,
 ): Promise<void> => {
     const initialQuestionText = normalizeVisibleText(
         await getQuestionText(interviewQuestionPage),
@@ -345,10 +340,6 @@ const waitForCurrentQuestionTimerToExpire = async (
     await expect
         .poll(
             async () => {
-                await virtualMicrophone.emitSilence(
-                    timeoutSilencePulseDurationMs,
-                )
-
                 if (await isInterviewCompleteVisible(interviewQuestionPage.page)) {
                     return true
                 }
@@ -372,7 +363,7 @@ const waitForCurrentQuestionTimerToExpire = async (
                 return currentTimerSeconds <= 1
             },
             {
-                intervals: [timeoutSilencePulseIntervalMs],
+                intervals: [1000],
                 timeout: timeoutMs,
             },
         )
@@ -395,30 +386,17 @@ const waitForCurrentQuestionTimerToStart = async (
         .toBeLessThan(initialTimerSeconds)
 }
 
-const prepareCurrentQuestionForApplicantAnswer = async (
+const waitForApplicantAnswerToStartQuestionTimer = async (
     interviewQuestionPage: InterviewQuestionPage,
-    virtualMicrophone: VirtualMicrophone,
 ): Promise<void> => {
     const initialTimerSeconds = timeToSeconds(
         await interviewQuestionPage.remainingTime.innerText(),
     )
-    const toneStartedAt = Date.now()
 
-    await virtualMicrophone.emitSilence(answerRecorderActivationToneMs)
-    await waitForCurrentQuestionTimerToStart(
-        interviewQuestionPage,
-        initialTimerSeconds,
-    )
+    await waitForCurrentQuestionTimerToStart(interviewQuestionPage, initialTimerSeconds)
     await expect(interviewQuestionPage.submitAnswerBtn).toBeEnabled({
         timeout: 30000,
     })
-
-    const remainingToneMs = Math.max(
-        answerRecorderActivationToneMs - (Date.now() - toneStartedAt),
-        0,
-    )
-
-    await wait(remainingToneMs + answerRecorderSettleMs)
 }
 
 const waitForApplicantAnswerToFlush = async (): Promise<void> => {
@@ -491,20 +469,17 @@ const answerDeepDiveQuestion = async ({
     const answerAudioBase64 =
         await virtualMicrophone.createSpeechAudioBase64(answer)
 
-    await prepareCurrentQuestionForApplicantAnswer(
-        interviewQuestionPage,
-        virtualMicrophone,
-    )
-    await virtualMicrophone.playAudioBase64(answerAudioBase64, {
+    const applicantAudioPlayback = virtualMicrophone.playAudioBase64(answerAudioBase64, {
         startDelayMs: 0,
     })
+    await waitForApplicantAnswerToStartQuestionTimer(interviewQuestionPage)
+    await applicantAudioPlayback
     await waitForApplicantAnswerToFlush()
 
     await advanceCurrentQuestion({
         advanceMethod: deepDiveAdvanceMethod,
         flow,
         interviewQuestionPage,
-        virtualMicrophone,
     })
 }
 
@@ -512,12 +487,10 @@ const advanceCurrentQuestion = async ({
     advanceMethod,
     flow,
     interviewQuestionPage,
-    virtualMicrophone,
 }: {
     advanceMethod: InteractiveFlowAdvanceMethod
     flow: InterviewFlowActions
     interviewQuestionPage: InterviewQuestionPage
-    virtualMicrophone: VirtualMicrophone
 }): Promise<void> => {
     if (advanceMethod === 'submit') {
         await flow.submitCurrentQuestion()
@@ -526,7 +499,6 @@ const advanceCurrentQuestion = async ({
 
     await waitForCurrentQuestionTimerToExpire(
         interviewQuestionPage,
-        virtualMicrophone,
     )
 }
 
@@ -612,13 +584,11 @@ export const answerLeadUpQuestion = async ({
     const answerAudioBase64 =
         await virtualMicrophone.createSpeechAudioBase64(questionData.answer)
 
-    await prepareCurrentQuestionForApplicantAnswer(
-        interviewQuestionPage,
-        virtualMicrophone,
-    )
-    await virtualMicrophone.playAudioBase64(answerAudioBase64, {
+    const applicantAudioPlayback = virtualMicrophone.playAudioBase64(answerAudioBase64, {
         startDelayMs: 0,
     })
+    await waitForApplicantAnswerToStartQuestionTimer(interviewQuestionPage)
+    await applicantAudioPlayback
     await waitForApplicantAnswerToFlush()
 }
 
@@ -642,7 +612,6 @@ export const handleDeepDiveLoop = async ({
         advanceMethod: leadUpAdvanceMethod,
         flow,
         interviewQuestionPage,
-        virtualMicrophone,
     })
 
     let shouldContinueDeepDiveLoop = true

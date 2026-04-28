@@ -32,7 +32,7 @@ const refreshFlowConfig = {
   sttProvider: "openai",
 } satisfies RefreshFlowConfig;
 
-const applicantAudioPulseMs = 700;
+const applicantTimerKickoffPrompt = "テストです。";
 const questionCount = refreshFlowConfig.questions.length;
 const refreshTestTimeoutMs = 180000;
 
@@ -146,7 +146,9 @@ const startCurrentQuestionTimer = async (
     await expect
       .poll(
         async () => {
-          await virtualMicrophone.emitTone(applicantAudioPulseMs);
+          await virtualMicrophone.speak(applicantTimerKickoffPrompt, {
+            startDelayMs: 0,
+          });
 
           return timeToSeconds(
             await interviewQuestionPage.remainingTime.innerText(),
